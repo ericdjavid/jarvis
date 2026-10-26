@@ -610,3 +610,79 @@
    one-line brief — not a name in a scannable list, so it wraps instead of
    ellipsing. At 380px "Sweep the theme files for r…" tells you nothing. */
 .sd .row-title { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------------------
+   ORBIT — the 3D session map (orbit3d.ts).
+   Full-bleed under the masthead: `top` is set from the masthead's height when
+   the tab opens. One blue family, hairlines, light type; the two states that
+   want you are the only warm notes and always travel with their word.
+   --------------------------------------------------------------------------- */
+#orbit-view { --o-blue: #4da3ff; --o-ice: #a9d4ff; --o-line: rgba(77, 163, 255, .22);
+  position: fixed; left: 0; right: 0; bottom: 0; top: 120px; overflow: hidden;
+  background: radial-gradient(ellipse 70% 80% at 38% 50%, #0a2a66 0%, #04122e 45%, #010510 100%); }
+#orbit-view[hidden] { display: none; }
+.orbit-stage { position: absolute; inset: 0; }
+.orbit-labels { position: absolute; inset: 0; pointer-events: none; }
+.orbit-veil { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 38% 50%, transparent 55%, rgba(0, 3, 12, .65) 100%),
+              repeating-linear-gradient(to bottom, rgba(169, 212, 255, .018) 0 1px, transparent 1px 4px); }
+
+.is-working { --c: #4da3ff; }
+.is-yourturn { --c: #ffd27a; }
+.is-blocked { --c: #ff4d6d; }
+.is-dormant { --c: #4a6a99; }
+
+.orbit-caption { font-size: 9px; letter-spacing: .32em; color: var(--o-ice); opacity: .55; margin-bottom: 10px; }
+.orbit-stats { position: absolute; top: 28px; left: 32px; width: 170px; pointer-events: none; }
+.orbit-stat { display: flex; align-items: baseline; gap: 12px; padding: 8px 0; border-top: 1px solid var(--o-line); color: var(--c); }
+.orbit-stat b { font: 200 34px/1 var(--font-ui); letter-spacing: .02em; font-variant-numeric: tabular-nums; color: #eaf4ff;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--c) 70%, transparent); }
+.orbit-stat span { font-size: 9px; letter-spacing: .28em; }
+.orbit-stat.is-hot b { color: var(--c); animation: orbit-breathe 2s ease-in-out infinite; }
+.orbit-activity { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--o-line); }
+.orbit-bars { display: flex; align-items: flex-end; gap: 1px; height: 34px; }
+.orbit-bars i { flex: 1; min-width: 1px; background: linear-gradient(to top, rgba(77, 163, 255, .25), var(--o-ice)); opacity: .75; }
+
+.orbit-panel { position: absolute; top: 28px; right: 28px; bottom: 52px; width: 360px; display: flex; flex-direction: column;
+  border: 1px solid var(--o-line); background: linear-gradient(180deg, rgba(8, 26, 60, .55), rgba(2, 8, 22, .7));
+  backdrop-filter: blur(14px); border-radius: 2px; }
+.orbit-panel-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; font-size: 9px;
+  letter-spacing: .32em; color: var(--o-ice); }
+.orbit-panel-head i { flex: 1; height: 1px; background: linear-gradient(90deg, var(--o-line), transparent); }
+.orbit-list { list-style: none; margin: 0; padding: 0 10px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--o-line) transparent; }
+
+.orbit-card { position: relative; padding: 12px 12px 12px 14px; margin-bottom: 2px; cursor: pointer;
+  border-bottom: 1px solid rgba(77, 163, 255, .08); transition: background .25s; }
+.orbit-card::before { content: ""; position: absolute; left: 0; top: 14px; width: 2px; height: 14px; background: var(--c);
+  box-shadow: 0 0 8px var(--c); }
+.orbit-card.is-hover { background: linear-gradient(90deg, rgba(77, 163, 255, .12), transparent); }
+.orbit-row { display: flex; align-items: baseline; gap: 10px; }
+.orbit-key { font: 400 9px var(--font-mono); color: var(--o-ice); opacity: .45; }
+.orbit-name { flex: 1; font: 500 12px var(--font-ui); letter-spacing: .14em; text-transform: uppercase; color: #eaf4ff;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-state { font-size: 8.5px; letter-spacing: .24em; color: var(--c); white-space: nowrap; }
+.orbit-topic { font: 300 12px var(--font-ui); color: var(--o-ice); margin: 5px 0 0 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orbit-msg { font: 300 11px/1.5 var(--font-ui); color: rgba(219, 232, 245, .5); margin: 4px 0 0 22px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.orbit-meta { font: 400 9px var(--font-mono); color: rgba(169, 212, 255, .35); margin: 6px 0 0 22px; letter-spacing: .06em; }
+
+.orbit-tag { pointer-events: auto; cursor: pointer; text-align: center; white-space: nowrap; transform: translateY(14px); }
+.orbit-tag-name { font: 400 10px var(--font-ui); letter-spacing: .26em; text-transform: uppercase; color: #eaf4ff;
+  text-shadow: 0 0 10px rgba(77, 163, 255, .8); }
+.orbit-tag-state { margin-top: 3px; font-size: 8px; letter-spacing: .3em; color: var(--c); opacity: .85; }
+.orbit-tag.is-hover .orbit-tag-name { color: var(--c); }
+
+.orbit-hint { position: absolute; left: 32px; bottom: 20px; font: 400 9px var(--font-mono); letter-spacing: .2em;
+  color: rgba(169, 212, 255, .35); white-space: pre; }
+.orbit-toast { position: absolute; left: 38%; bottom: 56px; transform: translate(-50%, 12px); opacity: 0; padding: 10px 20px;
+  font: 400 11px var(--font-ui); letter-spacing: .14em; color: var(--o-ice); border: 1px solid var(--o-line);
+  background: rgba(4, 16, 40, .85); backdrop-filter: blur(10px); transition: .35s; pointer-events: none; }
+.orbit-toast.is-show { opacity: 1; transform: translate(-50%, 0); }
+.orbit-toast.is-bad { color: #ff4d6d; border-color: rgba(255, 77, 109, .4); }
+@keyframes orbit-breathe { 50% { opacity: .55; } }
+
+@media (max-width: 900px) {
+  .orbit-panel { left: 12px; right: 12px; width: auto; top: auto; height: 42%; bottom: 12px; }
+  .orbit-stats, .orbit-hint { display: none; }
+}
+.orbit-bars i.is-empty { opacity: .25; min-height: 2px; }

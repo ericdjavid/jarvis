@@ -22,8 +22,10 @@
       </div>
 
       <nav id="view-tabs" class="tabs shell-tabs" role="tablist">
-        <button id="tab-runs" class="tab active" data-view="runs"
-                role="tab" aria-selected="true">Runs</button>
+        <button id="tab-orbit" class="tab active" data-view="orbit"
+                role="tab" aria-selected="true">Orbit</button>
+        <button id="tab-runs" class="tab" data-view="runs"
+                role="tab" aria-selected="false">Runs</button>
         <button id="tab-sessions" class="tab" data-view="sessions"
                 role="tab" aria-selected="false">
           Sessions
@@ -48,7 +50,7 @@
 
     <main class="shell-main">
       <!-- ── RUNS ────────────────────────────────────────────────────────── -->
-      <div id="runs-view" class="view">
+      <div id="runs-view" class="view" hidden>
         <!-- Failures come first: the thing you must not scroll past. Hidden
              entirely when there is nothing wrong. -->
         <section id="attention-section" class="panel panel--alert tone-bad" hidden>
@@ -84,6 +86,9 @@
 
       <!-- ── SESSIONS ────────────────────────────────────────────────────── -->
       <div id="sessions-view" class="view" hidden></div>
+
+      <!-- ── ORBIT ───────────────────────────────────────────────────────── -->
+      <div id="orbit-view" class="view"></div>
 
       <!-- ── MEMORY ──────────────────────────────────────────────────────── -->
       <div id="memory-view" class="view" hidden>

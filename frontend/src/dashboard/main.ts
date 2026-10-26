@@ -17,6 +17,7 @@ import { initMemory, refreshMemory } from "./memory";
 import { initProjects, refreshProjects } from "./projects";
 import { initSpecs, refreshSpecs } from "./specs";
 import { initUsage, refreshUsageView } from "./usage";
+import { initOrbit, setOrbitVisible } from "./orbit3d";
 import {
   el, row, readout, bar, pill, setTone, statusDot, statusPill, stateStyle,
   emptyState, flash,
@@ -454,6 +455,23 @@ function onRunChanged(run: RunRow): void {
   notifyRunChanged(run);
 }
 
+/** The 3D map sits under the masthead and only renders while it is showing:
+ * a WebGL loop in a hidden tab is a fan spinning for nothing. */
+function showOrbit(on: boolean): void {
+  setOrbitVisible(on);
+}
+
+/** The masthead grows once its readouts load, so the map's top edge follows
+ * it rather than being measured once. */
+function pinOrbitUnderMasthead(): void {
+  const view = document.getElementById("orbit-view");
+  const head = document.querySelector<HTMLElement>(".shell-head");
+  if (!view || !head) return;
+  const pin = (): void => { view.style.top = `${head.getBoundingClientRect().bottom}px`; };
+  new ResizeObserver(pin).observe(head);
+  pin();
+}
+
 function setupTabs(): void {
   const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>(".tab"));
   const views: Record<string, HTMLElement | null> = {
@@ -463,6 +481,7 @@ function setupTabs(): void {
     projects: document.getElementById("projects-view"),
     specs: document.getElementById("specs-view"),
     usage: document.getElementById("usage-view"),
+    orbit: document.getElementById("orbit-view"),
   };
   for (const tab of tabs) {
     tab.addEventListener("click", () => {
@@ -489,6 +508,9 @@ function setupTabs(): void {
       // sitting open and the wrong one for a tab just opened — the numbers
       // would be up to a minute stale at the moment they are looked at.
       if (view === "usage") void refreshUsageView();
+      // The 3D map only renders while it is showing: a WebGL loop in a
+      // hidden tab is a fan spinning for nothing.
+      showOrbit(view === "orbit");
     });
   }
 }
@@ -513,6 +535,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // brain takes a turn, and the transcripts are written by other processes
   // entirely. It loads up front and polls.
   initUsage();
+  initOrbit();
+  pinOrbitUnderMasthead();
+  // Orbit is the landing tab.
+  showOrbit(!document.getElementById("orbit-view")?.hidden);
 
   connectLive({
     onReconcile: () => void reconcile(),

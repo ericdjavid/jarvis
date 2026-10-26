@@ -82,6 +82,7 @@ import web_auth
 from run_executor import RunExecutor
 import data_paths
 import dialog
+import window_focus
 import jarvis_memory
 import notifier
 import tts
@@ -2251,6 +2252,22 @@ async def api_list_sessions(state: str = ""):
     for row in rows:
         projects.setdefault(row["project"], []).append(row["session_id"])
     return {"sessions": rows, "projects": projects, "taken_at": snap.taken_at}
+
+
+@app.post("/api/sessions/{session_id}/focus")
+async def api_focus_session(session_id: str):
+    """Bring the terminal window this conversation runs in to the front —
+    the dashboard's click-through. The pid comes from the snapshot, never
+    from the request, so the browser can only name a session that exists."""
+    snap = _snapshot_or_empty()
+    session = snap.by_id(session_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "Unknown session"})
+    pid = session.primary_pid or (session.pids[0] if session.pids else None)
+    if pid is None:
+        return {"outcome": window_focus.NO_TTY}
+    outcome = await window_focus.focus(pid, session.roster_name)
+    return {"outcome": outcome}
 
 
 # The tool result cap is what keeps the brain's context under budget.

@@ -191,6 +191,29 @@ export async function listSessions(): Promise<SessionsSnapshot> {
   return get<SessionsSnapshot>("/api/sessions");
 }
 
+/** What `window_focus.py` answered. Only "focused" means a window moved. */
+export type FocusOutcome =
+  | "focused" | "no_tty" | "not_found" | "not_permitted" | "failed";
+
+/** Raise the terminal window this conversation runs in (Terminal.app or
+ * Warp). The server picks the pid from its own snapshot. */
+export async function focusSession(sessionId: string): Promise<FocusOutcome> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/focus`,
+    { method: "POST" });
+  if (!res.ok) return "failed";
+  const body = (await res.json()) as { outcome: FocusOutcome };
+  return body.outcome;
+}
+
+/** One line for the user, per outcome. */
+export const FOCUS_MESSAGES: Record<FocusOutcome, string> = {
+  focused: "Fenêtre ouverte",
+  no_tty: "Cette session n'a pas de terminal",
+  not_found: "Fenêtre introuvable (onglet Warp en arrière-plan ?)",
+  not_permitted: "Autorise JARVIS : Réglages › Confidentialité › Accessibilité + Automatisation",
+  failed: "Échec de l'ouverture de la fenêtre",
+};
+
 /**
  * JARVIS's long-term memory: a folder of plain Markdown at
  * `<JARVIS_DATA_DIR>/jarvis/` (see `data_paths.py` / `jarvis_memory.py`).

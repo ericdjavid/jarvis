@@ -27,7 +27,7 @@
  * textContent, never innerHTML. That is the whole reason for the rule.
  */
 import {
-  listSessions, getUsageSessions,
+  listSessions, getUsageSessions, focusSession, FOCUS_MESSAGES,
   type SessionRow, type SessionUsage, type AgentUsage,
 } from "./api";
 import { connectSessionsLive } from "./sessions-live";
@@ -538,7 +538,18 @@ function detailFor(s: SessionRow): HTMLElement {
   const head = el("div", "sd-head");
   const close = button("Close", () => select(null), { quiet: true });
   close.title = "Close (Esc)";
-  head.append(statusDot(s.state), el("h2", "sd-name", s.voice_name), close);
+  const open = button("Ouvrir la fenêtre", () => {
+    open.disabled = true;
+    void focusSession(s.session_id).then((outcome) => {
+      open.textContent = FOCUS_MESSAGES[outcome];
+      setTimeout(() => {
+        open.textContent = "Ouvrir la fenêtre";
+        open.disabled = false;
+      }, 2500);
+    });
+  });
+  open.title = "Ramène le terminal de cette session au premier plan";
+  head.append(statusDot(s.state), el("h2", "sd-name", s.voice_name), open, close);
 
   const where = el("div", "sd-where");
   where.append(el("span", undefined, s.project || "(unknown project)"));
