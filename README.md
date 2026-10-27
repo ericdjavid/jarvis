@@ -12,6 +12,78 @@ a human he tells you which one, out loud, without you having to look.
 
 > "Will do, sir."
 
+## Cette version : un poste de pilotage pour tous vos agents Claude Code
+
+Cette branche est une version personnelle de
+[ethanplusai/jarvis](https://github.com/ethanplusai/jarvis), pensée pour quelqu'un
+qui fait tourner beaucoup de sessions Claude Code en parallèle dans
+[Warp](https://www.warp.dev/) et qui veut les piloter à la voix, en français.
+
+**Ce qu'elle ajoute :**
+
+- **Orbit, une carte 3D holographique de vos sessions.** Chaque session Claude
+  Code ouverte est un point en orbite autour d'un réacteur, coloré selon ce
+  qu'elle fait : elle travaille, elle vous attend, elle a fini. Le réacteur
+  s'anime quand JARVIS vous écoute, réfléchit ou parle.
+- **Passer d'un terminal à l'autre en un clic ou à la voix.** Un clic sur une
+  session, ou « ouvre la 3 », et seule la fenêtre Warp de cette session passe
+  au premier plan, même sur un deuxième écran. Les autres ne bougent pas.
+- **Des sessions numérotées et nommées comme vous les avez nommées** (avec
+  `/rename`). JARVIS et l'écran parlent des mêmes sessions : « envoie à la 4 »
+  ou « envoie à Content Machine ».
+- **Un agent chef d'orchestre.** JARVIS envoie vos consignes aux autres
+  sessions (« dis à la 2 de lancer les tests »), demande où en est une session
+  et vous prévient à voix haute quand une session vous attend.
+- **Un micro qui se laisse maîtriser.** Trois modes : il n'écoute qu'après
+  « Jarvis », il écoute tout, ou micro coupé. Un clic sur le réacteur veut
+  dire « je te parle ». Il ignore sa propre voix dans les enceintes, et
+  « stop » ou « arrête » le coupent net. Un seul onglet garde le micro.
+- **Une voix française** grâce à [ElevenLabs](https://elevenlabs.io)
+  (modèle `eleven_flash_v2_5`, langue forcée en français), et un JARVIS qui
+  répond en français. Fish Audio reste possible.
+- **Des actions en un mot.** Par exemple, « montre-moi mes revenus » ouvre
+  votre tableau de bord (RevenueCat, Stripe…) dans votre Chrome déjà connecté.
+  Il suffit de lui demander de s'en souvenir une fois.
+- **Des réponses plus rapides à entendre.** Il dit une phrase courte pendant
+  qu'il travaille (« Je regarde… ») au lieu d'un long silence. Il annonce un
+  envoi en trois mots au lieu de relire votre consigne. Il remet sa mémoire de
+  conversation à zéro plus tôt pour rester vif.
+
+### Démarrage rapide (macOS)
+
+1. Installez les prérequis listés plus bas (Claude Code connecté, Python 3.11+,
+   Node 18+, Chrome), puis lancez `pip install -r requirements.txt` et
+   `cd frontend && npm install`.
+2. Copiez `.env.example` en `.env` et mettez-y votre clé ElevenLabs :
+
+   ```env
+   ELEVENLABS_API_KEY=...
+   # ELEVENLABS_VOICE_ID=...   # une voix française de la bibliothèque ElevenLabs
+   USER_NAME=Votre prénom
+   ```
+
+3. Générez les certificats locaux (voir *Setup* plus bas).
+4. Lancez **`./start.sh` depuis un onglet Warp.** Il arrête toute ancienne
+   instance, démarre le serveur et l'interface, et ouvre le dashboard dans
+   Chrome.
+5. La première fois, autorisez **Warp** dans *Réglages Système ›
+   Confidentialité et sécurité › Accessibilité*, puis **quittez et relancez
+   Warp** : macOS n'applique ce réglage qu'au redémarrage de l'application.
+   C'est ce qui permet de mettre une fenêtre précise au premier plan.
+
+Le dashboard est sur `http://localhost:5173/dashboard.html`. Cliquez une fois
+dans la page pour autoriser le son, puis dites « Jarvis » ou cliquez sur le
+réacteur. La touche **J** change le mode du micro, **Échap** le fait taire,
+les touches **1 à 9** ouvrent la session du même numéro.
+
+> **Pourquoi lancer depuis Warp ?** macOS accorde le droit de déplacer des
+> fenêtres à l'application qui lance JARVIS. Lancé depuis un autre terminal
+> (ou depuis une session Claude Code), le clic sur une session ne pourra pas
+> ramener sa fenêtre.
+
+La suite de ce fichier est la documentation d'origine, en anglais. Elle reste
+valable pour tout ce qui n'est pas listé ci-dessus.
+
 ![Six seconds of the JARVIS orb while he is speaking, looping. Two thousand
 particles hold the shape of a hollow blue sphere, wired together by faint lines
 between the ones that drift close enough; a bright rim catches its lower edge.
@@ -76,10 +148,11 @@ limit.](docs/images/dashboard-usage.png)
 *So the number that matters is not a dollar figure — it is how much of your
 subscription's two windows is gone. Fictional sample data.*
 
-**The one thing you pay for is [Fish Audio](https://fish.audio/)**, which
-gives JARVIS his voice. Be aware there is no fallback: `tts.py` returns
-nothing without `FISH_API_KEY`, so JARVIS goes silent and his replies appear
-as text in the browser instead. If you would rather use a different TTS, that
+**The one thing you pay for is his voice**: [ElevenLabs](https://elevenlabs.io)
+when `ELEVENLABS_API_KEY` is set (this fork's default), otherwise
+[Fish Audio](https://fish.audio/). Be aware there is no fallback beyond that:
+`tts.py` returns nothing without one of the two keys, so JARVIS goes silent
+and his replies appear as text in the browser instead. If you would rather use a different TTS, that
 is a small, well-isolated file to replace — see *Make it yours* below.
 
 ## What he does
@@ -148,7 +221,8 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
 - **Python 3.11+** and **Node.js 18+**.
-- **A Fish Audio API key.** Required; there is no fallback voice.
+- **An ElevenLabs or a Fish Audio API key.** One is required; there is no
+  fallback voice.
 
 ## Setup
 
@@ -168,7 +242,8 @@ cd frontend && npm install && cd ..
 one required key and three optional ones:
 
 ```env
-FISH_API_KEY=...            # required, no fallback
+ELEVENLABS_API_KEY=...      # or FISH_API_KEY: one of the two is required
+# ELEVENLABS_VOICE_ID=...   # optional: an ElevenLabs voice (default George)
 # JARVIS_BRAIN_MODEL=sonnet # optional: the brain's model
 # FISH_VOICE_ID=...         # optional: a different voice
 # USER_NAME=Tony            # optional: what he calls you
@@ -317,7 +392,7 @@ invariants hold throughout it:
 | Frontend | Vite + TypeScript + Three.js (voice UI), vanilla TS (dashboard) |
 | Communication | WebSocket — JSON messages, base64 MP3 audio |
 | Brain | One long-lived `claude -p` process, Sonnet by default, on your subscription |
-| Voice | Fish Audio, one request per sentence |
+| Voice | ElevenLabs (or Fish Audio), one request per sentence |
 | System | AppleScript — Terminal, Chrome, notifications, screenshots |
 | Storage | SQLite for runs and usage; plain Markdown for memory |
 
@@ -330,7 +405,7 @@ invariants hold throughout it:
 | `claude_env.py` | The environment every spawned child gets, including the `ANTHROPIC_*` scrub |
 | `jarvis_mcp.py` | Stdio MCP server exposing JARVIS's tools to the brain |
 | `speech.py` | Sentence splitting, echo rejection, barge-in, and the queue of everything JARVIS says |
-| `tts.py` | Fish Audio synthesis — the whole voice, in one small file |
+| `tts.py` | ElevenLabs / Fish Audio synthesis — the whole voice, in one small file |
 | `builds.py` | Spec, brief and plan: the pipeline behind a real multi-hour build |
 | `specs.py` | The review surface — reading a design back by numbered section, and approving it |
 | `run_store.py` | SQLite `runs` / `run_events`, and the six-value status enum |
@@ -469,6 +544,10 @@ visit [ethanplus.ai](https://ethanplus.ai) for inquiries. See
 Built by [Ethan](https://ethanplus.ai). Runs on
 [Claude Code](https://claude.com/claude-code) and
 [Fish Audio](https://fish.audio).
+
+This fork (Orbit, French voice through [ElevenLabs](https://elevenlabs.io),
+numbered sessions, window switching in Warp) builds on
+[ethanplusai/jarvis](https://github.com/ethanplusai/jarvis).
 
 Inspired by the AI that started it all — Tony Stark's JARVIS.
 
