@@ -134,9 +134,10 @@ def test_there_is_no_caveat_when_messages_land_straight_in(wired):
     assert server._inbound_caveat() == ""
 
 
-def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
-    """The staged result is what the brain speaks from. It must carry the
-    caveat, or JARVIS says "sent, sir" and is wrong again."""
+def test_the_brain_is_told_to_stay_quiet(wired, monkeypatch):
+    """The read-back is the confirmation. Whatever the brain adds is spoken
+    before it and delays the send; messages land without approval here, so
+    there is no caveat to add either."""
     server, _settings = wired
 
     class _Session:
@@ -160,8 +161,8 @@ def test_the_brain_is_told_before_it_says_sent(wired, monkeypatch):
         server.tool_steer_session({"name": "chitauri", "prompt": "use Postgres"}))
 
     assert "staged" in out
-    assert "approve" in out
-    assert "enable_session_inbox" in out
+    assert "no text" in out
+    assert "approve" not in out
 
 
 class _RecordingSpeech:
@@ -199,16 +200,15 @@ async def test_delivery_is_never_asserted(wired, monkeypatch):
     """Bytes leaving is not a message landing, so he no longer says it did."""
     server, _settings = wired
     said = await _perform_one(server, monkeypatch)
-    assert said.startswith("Passed to chitauri, sir.")
+    assert said.startswith("C'est envoyé à chitauri.")
     assert "Sent" not in said
 
 
 @pytest.mark.asyncio
-async def test_the_spoken_outcome_warns_that_it_needs_approving(wired,
-                                                                monkeypatch):
+async def test_the_spoken_outcome_is_one_short_line(wired, monkeypatch):
     server, _settings = wired
     said = await _perform_one(server, monkeypatch)
-    assert "approve" in said
+    assert said == "C'est envoyé à chitauri."
 
 
 @pytest.mark.asyncio
@@ -216,7 +216,7 @@ async def test_with_the_setting_on_there_is_no_warning(wired, monkeypatch):
     server, settings = wired
     _write(settings, {"crossSessionInbound": "accept"})
     said = await _perform_one(server, monkeypatch)
-    assert said == "Passed to chitauri, sir."
+    assert said == "C'est envoyé à chitauri."
 
 
 # --- the tool -------------------------------------------------------------

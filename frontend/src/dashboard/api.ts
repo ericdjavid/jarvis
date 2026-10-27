@@ -141,6 +141,8 @@ export interface SessionRow {
   session_id: string;
   voice_name: string;
   roster_name: string;
+  /** Stable while the session lives; what the user says out loud ("la 3"). */
+  number?: number;
   project: string;
   cwd: string;
   state: SessionState;
@@ -210,7 +212,7 @@ export const FOCUS_MESSAGES: Record<FocusOutcome, string> = {
   focused: "Fenêtre ouverte",
   no_tty: "Cette session n'a pas de terminal",
   not_found: "Fenêtre introuvable (onglet Warp en arrière-plan ?)",
-  not_permitted: "Autorise JARVIS : Réglages › Confidentialité › Accessibilité + Automatisation",
+  not_permitted: "Autorise JARVIS : Réglages › Confidentialité › Accessibilité (Warp)",
   failed: "Échec de l'ouverture de la fenêtre",
 };
 

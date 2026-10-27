@@ -60,3 +60,6 @@ AGENTS.md
 # Always local — never tracked in the parent repo.
 .claude/worktrees/
 # <!-- orcha:managed:end -->
+
+# JARVIS run logs: they hold the conversation
+logs/

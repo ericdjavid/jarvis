@@ -133,7 +133,7 @@ async def test_a_success_says_the_project_and_that_it_worked(wired, monkeypatch)
     server._on_run_event(_finished(project="chitauri"))
     await _drain(server)
 
-    assert speech.calls[0][0] == "The work in chitauri is done, sir."
+    assert speech.calls[0][0] == "Le travail sur chitauri est terminé."
 
 
 @pytest.mark.asyncio
@@ -210,7 +210,7 @@ async def test_a_run_and_a_conversation_share_one_utterance(wired, monkeypatch):
     assert len(speech.calls) == 1
     text = speech.calls[0][0]
     assert "hammer has finished" in text
-    assert "The work in chitauri is done" in text
+    assert "Le travail sur chitauri est terminé" in text
 
 
 @pytest.mark.asyncio

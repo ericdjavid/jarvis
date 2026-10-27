@@ -131,7 +131,9 @@ class Priority(IntEnum):
 
 
 BRIDGES = ("As I was saying —", "Back to it —", "Where was I —")
-CANCEL_WORDS = ("wait", "no", "stop", "cancel", "hold on")
+CANCEL_WORDS = ("wait", "no", "stop", "cancel", "hold on",
+                # the user speaks French
+                "arrête", "arrete", "tais toi", "chut", "attends", "annule", "silence")
 UNREAD_PREFIX = "Before I forget —"
 # The last resort, and only that. An unacked chunk's tokens count as echo
 # because the chunk may still be coming out of the speaker — and nothing plays
@@ -226,11 +228,34 @@ SHORT_UTTERANCE_TOKENS = 2
 Synthesize = Callable[[str], Awaitable[Optional[bytes]]]
 Emit = Callable[[dict], Awaitable[None]]
 
-_TOKEN_RE = re.compile(r"[a-z0-9']+")
+# Accented letters are letters: "arrête" must stay one word, not "arr" + "te".
+_TOKEN_RE = re.compile(r"[a-z0-9'\u00e0-\u00ff\u0153]+")
 
 
 def _tokens(text: str) -> list[str]:
     return _TOKEN_RE.findall((text or "").lower())
+
+
+def _echoed(toks: list[str], recent: set) -> list[bool]:
+    """Which heard words are him, heard back.
+
+    Whole-token membership, plus one thing it misses: the recogniser splits
+    his compound names. He says "MovieNight" (one token), the mic returns
+    "movie ni" — two words in nothing he said, so two "novel" words, so a
+    barge-in that cancelled his own read-back of a steer. A word of four
+    letters or more inside one of his longer words, or a word that continues
+    the previous one inside one of his, counts as his.
+    """
+    out = []
+    for i, t in enumerate(toks):
+        hit = t in recent
+        if not hit and len(t) >= 4:
+            hit = any(len(r) > len(t) and t in r for r in recent)
+        if not hit and i > 0:
+            joined = toks[i - 1] + t
+            hit = any(joined in r for r in recent)
+        out.append(hit)
+    return out
 
 
 # "Say that again" must be replayed, not answered — regenerating an answer
@@ -585,8 +610,12 @@ class SpeechScheduler:
             return "replay"
         recent = self._recent_tokens()
         if recent:
-            matching = sum(1 for t in toks if t in recent)
-            if matching / len(toks) >= 0.7 and len(toks) - matching < 2:
+            matching = sum(_echoed(toks, recent))
+            share = matching / len(toks)
+            # A long echo is never word-perfect: live, a 40-word sentence of
+            # his came back with "Revenu 4" for "RevenueCat" and "envoie" for
+            # "vois", failed the two-misses rule, and he answered himself.
+            if (share >= 0.7 and len(toks) - matching < 2) or (len(toks) >= 8 and share >= 0.6):
                 if (len(toks) <= SHORT_UTTERANCE_TOKENS
                         and self._since_last_ack() > SHORT_ECHO_GRACE_SEC):
                     return "speech"     # his word, but the user's mouth: see SHORT_ECHO_GRACE_SEC
@@ -636,7 +665,7 @@ class SpeechScheduler:
 
     def _nonmatching(self, text: str) -> int:
         recent = self._recent_tokens()
-        return sum(1 for t in _tokens(text) if t not in recent)
+        return sum(1 for hit in _echoed(_tokens(text), recent) if not hit)
 
     async def user_interim(self, text: str) -> str:
         # Replay is decided only on the FINAL transcript (a partial "say
@@ -671,6 +700,17 @@ class SpeechScheduler:
         heard as "wait". So the one-word branch also asks whether the word is
         a STEM of something he is saying.
         """
+        # Through speakers the mic hears all of him, so "stop" arrives glued to
+        # the end of his own sentence: "...si vous voulez stop". The whole
+        # phrase reads as echo and the stop was lost. A cancel word at the
+        # END of what was heard, that he is not saying himself, stops him.
+        toks = _tokens(text)
+        recent = self._recent_tokens()
+        for k in (2, 1):
+            tail = toks[-k:]
+            if (len(toks) >= k and " ".join(tail) in self.cancel_words
+                    and not all(t in recent for t in tail)):
+                return True
         novel = self._nonmatching(text)
         # While his audio is actually coming out of the speaker, the room is
         # full of his voice and the recogniser garbles it into words he never
@@ -714,7 +754,7 @@ class SpeechScheduler:
         recent = self._recent_tokens()
         if not recent:
             return 0.0
-        return sum(1 for t in toks if t in recent) / len(toks)
+        return sum(_echoed(toks, recent)) / len(toks)
 
     def _is_stem_echo(self, toks: list) -> bool:
         """Is every one of these words just a clipped form of something he is

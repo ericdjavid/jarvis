@@ -18,13 +18,14 @@ background Warp TAB does not put its title on the window, so it is
 
 **3. Nothing here raises.** Every path returns an outcome string.
 
-Needs Accessibility + Automation (System Events) for the process running
-JARVIS, the same grant `dialog.py` already asks for.
+Warp needs only Accessibility for the process running JARVIS (AX API via
+ctypes); the Terminal.app path still goes through AppleScript.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
 import os
 import shutil
@@ -86,41 +87,158 @@ def _write_title(tty: str, title: str) -> bool:
         os.close(fd)
 
 
-def _raise_warp_script(needle: str) -> str:
-    # The needle is a fixed ASCII marker built from an int, so quoting it is
-    # belt and braces, not a sanitiser.
-    quoted = needle.replace("\\", "").replace('"', "")
-    return f'''
-tell application "System Events"
-    set warp to first application process whose bundle identifier is "{WARP_BUNDLE_ID}"
-    repeat with w in windows of warp
-        if name of w contains "{quoted}" then
-            perform action "AXRaise" of w
-            set frontmost of warp to true
-            return "raised"
-        end if
-    end repeat
-    return "missing"
-end tell
-'''
+# --- Accessibility API (ctypes, no Apple Events) ----------------------------
+# System Events needs an Automation grant that macOS can refuse silently
+# (-1743 with the toggle on, no prompt after a reset). The AX API underneath
+# needs only Accessibility, which the terminal running JARVIS already has.
+
+_AS = ctypes.cdll.LoadLibrary(
+    "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+_CF = ctypes.cdll.LoadLibrary(
+    "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+_UTF8 = 0x08000100
+_VP = ctypes.c_void_p
+
+_AS.AXIsProcessTrusted.restype = ctypes.c_bool
+_AS.AXUIElementCreateApplication.restype = _VP
+_AS.AXUIElementCreateApplication.argtypes = [ctypes.c_int]
+_AS.AXUIElementCopyAttributeValue.restype = ctypes.c_int
+_AS.AXUIElementCopyAttributeValue.argtypes = [_VP, _VP, ctypes.POINTER(_VP)]
+_AS.AXUIElementSetAttributeValue.restype = ctypes.c_int
+_AS.AXUIElementSetAttributeValue.argtypes = [_VP, _VP, _VP]
+_AS.AXUIElementPerformAction.restype = ctypes.c_int
+_AS.AXUIElementPerformAction.argtypes = [_VP, _VP]
+_CF.CFStringCreateWithCString.restype = _VP
+_CF.CFStringCreateWithCString.argtypes = [_VP, ctypes.c_char_p, ctypes.c_uint32]
+_CF.CFStringGetCString.restype = ctypes.c_bool
+_CF.CFStringGetCString.argtypes = [_VP, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+_CF.CFArrayGetCount.restype = ctypes.c_long
+_CF.CFArrayGetCount.argtypes = [_VP]
+_CF.CFArrayGetValueAtIndex.restype = _VP
+_CF.CFArrayGetValueAtIndex.argtypes = [_VP, ctypes.c_long]
+_CF.CFRelease.argtypes = [_VP]
+_TRUE = _VP.in_dll(_CF, "kCFBooleanTrue")
+_AS.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+_AS.AXIsProcessTrustedWithOptions.argtypes = [_VP]
+_CF.CFDictionaryCreate.restype = _VP
+_CF.CFDictionaryCreate.argtypes = [_VP, ctypes.POINTER(_VP), ctypes.POINTER(_VP), ctypes.c_long, _VP, _VP]
+_prompted = False
+
+# NSRunningApplication through the ObjC runtime: `activateWithOptions:0`
+# brings forward only the app's main window, where AXFrontmost (like a Dock
+# click) pulls every Warp window on every display in front of everything.
+ctypes.cdll.LoadLibrary("/System/Library/Frameworks/AppKit.framework/AppKit")
+_OBJC = ctypes.cdll.LoadLibrary("/usr/lib/libobjc.A.dylib")
+_OBJC.objc_getClass.restype = _VP
+_OBJC.objc_getClass.argtypes = [ctypes.c_char_p]
+_OBJC.sel_registerName.restype = _VP
+_OBJC.sel_registerName.argtypes = [ctypes.c_char_p]
+_send_int = ctypes.CFUNCTYPE(_VP, _VP, _VP, ctypes.c_int)(("objc_msgSend", _OBJC))
+_send_ulong = ctypes.CFUNCTYPE(ctypes.c_bool, _VP, _VP, ctypes.c_ulong)(("objc_msgSend", _OBJC))
+
+
+def _activate_main_window_only(app_pid: int) -> bool:
+    cls = _OBJC.objc_getClass(b"NSRunningApplication")
+    app = _send_int(cls, _OBJC.sel_registerName(b"runningApplicationWithProcessIdentifier:"), app_pid)
+    if not app:
+        return False
+    return bool(_send_ulong(app, _OBJC.sel_registerName(b"activateWithOptions:"), 0))
+
+
+def _ask_for_accessibility() -> None:
+    """Once per run: have macOS show its own "allow Accessibility" dialog,
+    which also lists the right app (the one macOS holds responsible) in
+    Settings. Toggling a stale entry by hand does not always do that."""
+    global _prompted
+    if _prompted:
+        return
+    _prompted = True
+    # Real CF callbacks and the framework's own key constant: a dictionary
+    # built with NULL callbacks segfaults inside AXIsProcessTrustedWithOptions.
+    key_cb = ctypes.addressof(ctypes.c_char.in_dll(_CF, "kCFTypeDictionaryKeyCallBacks"))
+    val_cb = ctypes.addressof(ctypes.c_char.in_dll(_CF, "kCFTypeDictionaryValueCallBacks"))
+    key = _VP.in_dll(_AS, "kAXTrustedCheckOptionPrompt").value
+    opts = _CF.CFDictionaryCreate(None, (_VP * 1)(key), (_VP * 1)(_TRUE.value), 1,
+                                  key_cb, val_cb)
+    try:
+        _AS.AXIsProcessTrustedWithOptions(opts)
+    finally:
+        _CF.CFRelease(opts)
+
+
+def _cfstr(text: str):
+    return _CF.CFStringCreateWithCString(None, text.encode(), _UTF8)
+
+
+def _str_of(ref) -> str:
+    buf = ctypes.create_string_buffer(512)
+    if ref and _CF.CFStringGetCString(ref, buf, 512, _UTF8):
+        return buf.value.decode("utf-8", "replace")
+    return ""
+
+
+def _warp_pid() -> int | None:
+    try:
+        out = subprocess.run(["lsappinfo", "info", "-only", "pid", "-app", WARP_BUNDLE_ID],
+                             capture_output=True, text=True, timeout=1.0).stdout
+    except Exception:
+        return None
+    digits = out.rsplit("=", 1)[-1].strip()
+    return int(digits) if digits.isdigit() else None
+
+
+def _ax_raise_window(app_pid: int, needle: str) -> str:
+    """Raise the window of `app_pid` whose title contains `needle`, then make
+    the app frontmost. Returns FOCUSED, NOT_FOUND or NOT_PERMITTED."""
+    if not _AS.AXIsProcessTrusted():
+        _ask_for_accessibility()
+        return NOT_PERMITTED
+    app = _AS.AXUIElementCreateApplication(app_pid)
+    k_windows, k_title = _cfstr("AXWindows"), _cfstr("AXTitle")
+    k_raise, k_main, k_front = _cfstr("AXRaise"), _cfstr("AXMain"), _cfstr("AXFrontmost")
+    windows = _VP()
+    try:
+        if _AS.AXUIElementCopyAttributeValue(app, k_windows, ctypes.byref(windows)) != 0 \
+                or not windows.value:
+            return NOT_FOUND
+        for i in range(_CF.CFArrayGetCount(windows)):
+            win = _CF.CFArrayGetValueAtIndex(windows, i)
+            title = _VP()
+            if _AS.AXUIElementCopyAttributeValue(win, k_title, ctypes.byref(title)) != 0:
+                continue
+            found = needle in _str_of(title)
+            _CF.CFRelease(title)
+            if found:
+                _AS.AXUIElementSetAttributeValue(win, k_main, _TRUE)
+                _AS.AXUIElementPerformAction(win, k_raise)
+                if not _activate_main_window_only(app_pid):
+                    # macOS refused the polite activation: fall back to AX,
+                    # which raises every Warp window but at least gets there.
+                    _AS.AXUIElementSetAttributeValue(app, k_front, _TRUE)
+                return FOCUSED
+        return NOT_FOUND
+    finally:
+        if windows.value:
+            _CF.CFRelease(windows)
+        for ref in (k_windows, k_title, k_raise, k_main, k_front, app):
+            _CF.CFRelease(ref)
 
 
 async def _focus_warp(pid: int, tty: str, name: str) -> str:
+    app_pid = await asyncio.to_thread(_warp_pid)
+    if app_pid is None:
+        return NOT_FOUND
     marker = _marker(pid)
     if not await asyncio.to_thread(_write_title, tty, marker):
         return FAILED
     await asyncio.sleep(TITLE_SETTLE_SEC)
     try:
-        code, out, err = await dialog._osascript(_raise_warp_script(marker),
-                                                 RAISE_TIMEOUT)
+        outcome = await asyncio.to_thread(_ax_raise_window, app_pid, marker)
     finally:
         await asyncio.to_thread(_write_title, tty, name or "claude")
-    if code != 0:
-        if dialog._is_permission_error(err):
-            return NOT_PERMITTED
-        log.warning(f"warp raise for pid {pid} failed: {err.strip()}")
-        return FAILED
-    return FOCUSED if out.strip() == "raised" else NOT_FOUND
+    if outcome == NOT_PERMITTED:
+        log.warning("warp raise not permitted: the process running JARVIS lacks Accessibility")
+    return outcome
 
 
 def _raise_terminal_script(tab: "dialog.TerminalTab") -> str:
@@ -141,6 +259,7 @@ async def _focus_terminal(tty: str) -> str:
     code, _out, err = await dialog._osascript(_raise_terminal_script(tab),
                                               RAISE_TIMEOUT)
     if code != 0:
+        log.warning(f"terminal raise failed: {err.strip()}")
         return NOT_PERMITTED if dialog._is_permission_error(err) else FAILED
     return FOCUSED
 

@@ -229,7 +229,7 @@ export function createVoiceInput(
     const sr = new SR();
     sr.continuous = true;
     sr.interimResults = true;
-    sr.lang = "en-US";
+    sr.lang = "fr-FR";
     const e: Engine = { sr, running: false, audio: false, startedAt: 0, stoppedAt: 0, retired: false };
 
     sr.onstart = () => {
@@ -482,6 +482,8 @@ export interface AudioPlayer {
   getAnalyser(): AnalyserNode;
   onPlayed(cb: (utt: number, idx: number) => void): void;
   onFinished(cb: () => void): void;
+  /** Sound is coming out of the speaker, or is queued to. */
+  playing(): boolean;
 }
 
 interface QueuedChunk {
@@ -601,6 +603,10 @@ export function createAudioPlayer(): AudioPlayer {
 
     getAnalyser() {
       return analyser;
+    },
+
+    playing() {
+      return currentSource !== null || queue.length > 0;
     },
 
     onPlayed(cb) {

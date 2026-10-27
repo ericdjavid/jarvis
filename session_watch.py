@@ -364,6 +364,7 @@ class SessionState:
     primary_pid: int | None = None
     roster_name: str = ""
     voice_name: str = ""
+    number: int = 0          # stable for the life of the server: "envoie à la 3"
     needs: str | None = None
     title: str | None = None
     last_prompt: str | None = None
@@ -700,7 +701,48 @@ def _derive_state(entries: list[RosterEntry], recap: Recap) -> tuple[str, str | 
     return IDLE, None
 
 
+# The user names his sessions with /rename (CONTENT_MACHINE, MY_APP) and the
+# dashboard shows those names. Speaking a different one ("myproject, the plus
+# puissante one") left him and JARVIS with no name in common. An auto name
+# (`myproject-8d`) is not a choice anyone made, and keeps the derived one.
+_AUTO_ROSTER = re.compile(r".+-[0-9a-f]{1,4}")
+_SHOUTED = {"ai", "ia", "x", "ui", "api", "mrr", "seo"}
+
+
+def _spoken_roster(name: str) -> str:
+    words = [w for w in re.split(r"[_\-\s]+", name.strip()) if w]
+    return " ".join(w.upper() if w.lower() in _SHOUTED else w.capitalize() for w in words)
+
+
+# session_id -> number. Kept across snapshots so a session keeps its number
+# while it lives; a newcomer takes the lowest number nobody present holds.
+_NUMBERS: dict[str, int] = {}
+
+
+def _assign_numbers(sessions: list[SessionState]) -> None:
+    taken: set[int] = set()
+    for s in sorted(sessions, key=lambda s: (s.started or 0, s.session_id)):
+        n = _NUMBERS.get(s.session_id)
+        if n is None or n in taken:
+            n = 1
+            while n in taken:
+                n += 1
+            _NUMBERS[s.session_id] = n
+        taken.add(n)
+        s.number = n
+
+
 def _assign_voice_names(sessions: list[SessionState]) -> None:
+    _derive_voice_names(sessions)
+    named = [s for s in sessions if s.roster_name and not _AUTO_ROSTER.fullmatch(s.roster_name)]
+    spoken = [_spoken_roster(s.roster_name) for s in named]
+    for s, name in zip(named, spoken):
+        if spoken.count(name) == 1:
+            s.voice_name = name
+    _assign_numbers(sessions)
+
+
+def _derive_voice_names(sessions: list[SessionState]) -> None:
     """Give every conversation a name a person can say and hear.
 
     Collisions measured on the live machine: `hammer` had two conversations in
@@ -860,6 +902,25 @@ _FILLER = frozenset({
 })
 
 
+_FR_NUMBERS = {"un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5,
+               "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11,
+               "douze": 12, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+_NUMBER_REF = re.compile(
+    r"(?:(?:la|le|session|numéro|numero|n°|no|#|number)\s*)*(\d{1,2}|[a-zé]+)")
+
+
+def _spoken_number(ref: str) -> int | None:
+    """'3', 'la 3', 'numéro trois', 'session 3' -> 3. A bare 'une' is a number
+    only when it is the whole reference."""
+    m = _NUMBER_REF.fullmatch(ref.strip())
+    if not m:
+        return None
+    word = m.group(1)
+    if word.isdigit():
+        return int(word)
+    return _FR_NUMBERS.get(word)
+
+
 def _name_words(s: "SessionState") -> set[str]:
     """Every word that could identify this conversation out loud."""
     import re as _re
@@ -949,6 +1010,9 @@ class Snapshot:
         ref = " ".join((reference or "").lower().split())
         if not ref:
             return []
+        n = _spoken_number(ref)
+        if n is not None:
+            return [s for s in self.sessions if s.number == n]
         if ref in ("that one", "that", "it", "the same one", "that session"):
             s = self.by_id(last_mentioned) if last_mentioned else None
             return [s] if s else []
@@ -1255,6 +1319,7 @@ def session_to_dict(s: SessionState) -> dict:
     return {
         "session_id": s.session_id,
         "voice_name": s.voice_name,
+        "number": s.number,
         "roster_name": s.roster_name,
         "project": s.project,
         "cwd": s.cwd,

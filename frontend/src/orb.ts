@@ -26,7 +26,7 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
   const N = 2000;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x050508, 1);
 
@@ -124,9 +124,15 @@ export function createOrb(canvas: HTMLCanvasElement): Orb {
 
   const clock = new THREE.Clock();
 
-  function animate() {
+  // 30 fps is plenty for a breathing orb, and halves the GPU cost on 120 Hz screens.
+  const FRAME_MS = 1000 / 30;
+  let lastFrame = 0;
+
+  function animate(now = 0) {
     if (destroyed) return;
     requestAnimationFrame(animate);
+    if (now - lastFrame < FRAME_MS) return;
+    lastFrame = now;
     const t = clock.getElapsedTime();
 
     switch (state) {

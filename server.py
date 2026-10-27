@@ -99,6 +99,12 @@ log = logging.getLogger("jarvis")
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
 FISH_API_URL = "https://api.fish.audio/v1/tts"
+# ElevenLabs takes over when its key is set (default voice: "George", British).
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
+TTS_PROVIDER = "elevenlabs" if ELEVENLABS_API_KEY else "fish"
+TTS_API_KEY = ELEVENLABS_API_KEY or FISH_API_KEY
+TTS_VOICE_ID = ELEVENLABS_VOICE_ID if ELEVENLABS_API_KEY else FISH_VOICE_ID
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -462,25 +468,15 @@ _last_greeting_time: float = 0
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
-    if not FISH_API_KEY:
-        log.warning("FISH_API_KEY not set, skipping TTS")
+    """Generate speech audio from text (Fish Audio or ElevenLabs)."""
+    if not TTS_API_KEY:
+        log.warning("no TTS key set (FISH_API_KEY / ELEVENLABS_API_KEY), skipping TTS")
         return None
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as http:
             response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "reference_id": FISH_VOICE_ID,
-                    "format": "mp3",
-                },
-            )
+                **tts.request_args(TTS_PROVIDER, text, TTS_API_KEY, TTS_VOICE_ID))
             if response.status_code == 200:
                 _session_tokens["tts_calls"] += 1
                 _append_usage_entry(0, 0, "tts")
@@ -612,7 +608,8 @@ async def _voice_emit(msg: dict) -> None:
 
 
 async def _synth_for_speech(text: str) -> Optional[bytes]:
-    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
+    r = await tts.synthesize_chunk(text, api_key=TTS_API_KEY, voice_id=TTS_VOICE_ID,
+                                   client=_tts_client, provider=TTS_PROVIDER)
     if r is None:
         return None
     _session_tokens["tts_calls"] += 1
@@ -708,23 +705,23 @@ async def _on_brain_state(state: str, info: dict) -> None:
         now = time.time()
         if now - _brain_notice_at["restarting"] > 60:
             _brain_notice_at["restarting"] = now
-            await speech.say("Rebooting my language systems, one moment.", Priority.NORMAL)
+            await speech.say("Je redémarre, un instant.", Priority.NORMAL)
     elif state == "failed":
         line = (_AUTH_BRAIN_DOWN_LINE if info.get("failure_reason") == "auth"
                else "My language systems are down, sir. Check the server log.")
         await speech.say(line, Priority.URGENT, immediate=True)
     elif state == "rate_limited":
-        await speech.say(f"I've hit the usage limit until {_fmt_reset(info.get('resets_at'))}, sir.",
+        await speech.say(f"J'ai atteint ma limite d'utilisation jusqu'à {_fmt_reset(info.get('resets_at'))}.",
                          Priority.NORMAL)
 
 
 def _greeting() -> str:
     hour = datetime.now().hour
     if hour < 12:
-        return "Good morning, sir."
+        return "Bonjour, monsieur."
     if hour < 17:
-        return "Good afternoon, sir."
-    return "Good evening, sir."
+        return "Bonjour, monsieur."
+    return "Bonsoir, monsieur."
 
 
 def _tool_connect_host(bind_host: str) -> str:
@@ -1071,7 +1068,7 @@ async def _start_fresh() -> None:
         except Exception as e:
             log.error(f"fresh start failed: {e}", exc_info=True)
             if speech is not None:
-                await speech.say("I couldn't clear it, sir.", Priority.NORMAL)
+                await speech.say("Je n'ai pas réussi à repartir à zéro.", Priority.NORMAL)
             return
     log.info("fresh start: generation discarded at the user's request")
     if speech is not None:
@@ -1256,13 +1253,14 @@ async def _announce_needs_you(event: dict) -> None:
     name = _said_name(s, "A session")
     needs = s.get("needs")
     if needs:
-        reason = _phrase_needs(needs)
+        # Spoken in French; the brain still gets `_phrase_needs`'s English.
+        reason = _NEEDS_SPOKEN_FR.get(needs) or _phrase_needs(needs)
         if s.get("needs_a_human_hand"):
-            line = f"{name} is {reason}, sir — that one needs your own keystroke."
+            line = f"{name} attend {reason}, monsieur : à vous de valider dans sa fenêtre."
         else:
-            line = f"{name} is {reason}, sir."
+            line = f"{name} attend {reason}, monsieur."
     else:
-        line = f"{name} has stopped and wants you, sir."
+        line = f"{name} vous attend, monsieur."
     try:
         await speech.say(line, Priority.URGENT)
     except Exception as e:
@@ -1326,8 +1324,8 @@ def _run_batch_line(projects: list[str]) -> str:
     so "is done" is an honest report of success, not a euphemism for "ended".
     """
     if len(projects) == 1:
-        return f"The work in {projects[0]} is done, sir."
-    return f"Work in {_cap_listing(projects)} is done, sir."
+        return f"Le travail sur {projects[0]} est terminé."
+    return f"Le travail sur {_cap_listing(projects)} est terminé."
 
 
 async def _announce_batch() -> None:
@@ -1426,11 +1424,11 @@ async def _announce_run_stalled(run: dict, outcome: str) -> None:
         return
     project = _run_project(run)
     if outcome == stream_parser.STALLED:
-        line = (f"The work in {project} stopped to ask a question, sir, so "
-                f"nothing was built.")
+        line = (f"Le travail sur {project} s'est arrêté sur une question, "
+                f"rien n'a été construit.")
     else:
-        line = (f"The work in {project} finished, sir, but I can't see that "
-                f"it changed anything.")
+        line = (f"Le travail sur {project} est fini, mais je ne vois aucun "
+                f"changement.")
     try:
         await speech.say(line, Priority.URGENT)
     except Exception as e:
@@ -1553,6 +1551,36 @@ async def stop_session_watcher() -> None:
 TURN_SETTLE_TIMEOUT = 120.0
 
 
+# One short line the moment a turn reaches for its first tool, so a 10-second
+# turn is not 10 seconds of silence. Tools that act fast, or that are read back
+# anyway (steer, keypress, command), get none: they would only add chatter.
+_TOOL_CUES = {
+    "list_sessions": "Je regarde.",
+    "session_detail": "Je regarde où elle en est.",
+    "list_projects": "Un instant.",
+    "run_status": "Je regarde.",
+    "build_status": "Je regarde.",
+    "read_page": "J'ouvre la page.",
+    "look_at_page": "J'ouvre la page.",
+    "open_in_browser": "J'ouvre ça.",
+    "what_is_on_screen": "Je regarde l'écran.",
+    "look_at_screen": "Je regarde l'écran.",
+    "github_repo": "Je regarde sur GitHub.",
+    "repo_overview": "Je regarde le code.",
+    "search_repo": "Je cherche dans le code.",
+    "read_file": "Je regarde le code.",
+    "recall": "Je cherche dans ma mémoire.",
+    "usage_status": "Je regarde.",
+    "spawn_run": "Je lance ça.",
+    "start_build": "Je lance ça.",
+    "create_project": "Je m'en occupe.",
+}
+
+
+def _tool_cue(name: str) -> str:
+    return _TOOL_CUES.get(name.rsplit("__", 1)[-1], "")
+
+
 class _OneLinePerTurn:
     """A turn that uses a tool says exactly one thing, at the end.
 
@@ -1577,9 +1605,10 @@ class _OneLinePerTurn:
       when the turn ends.
     """
 
-    def __init__(self, sink, hold_for: float = 0.6):
+    def __init__(self, sink, hold_for: float = 0.6, cue: bool = False):
         self._sink = sink
         self._hold_for = hold_for
+        self._cue = cue             # say a short "Je regarde." on the first slow tool
         self._held: list[str] = []
         self._streaming = False     # released: everything now goes straight out
         self._tool_seen = False
@@ -1599,12 +1628,16 @@ class _OneLinePerTurn:
             self._flush()
             self._streaming = True
 
-    def tool_started(self) -> None:
+    def tool_started(self, name: str = "") -> None:
         """A tool call: everything written up to here was an intention."""
         if self._held:
             log.info("speech: dropped narration before a tool: %r",
                      "".join(self._held)[:60])
         self._held.clear()
+        line = _tool_cue(name) if self._cue else ""
+        if line:
+            self._cue = False       # once per turn
+            self._sink(line + " ")
         self._tool_seen = True
         self._streaming = False     # hold again; more tools may follow
 
@@ -1642,7 +1675,7 @@ async def _handle_utterance(text: str) -> None:
     try:
         try:
             try:
-                hold = _OneLinePerTurn(lambda d: speech.feed(utt, d))
+                hold = _OneLinePerTurn(lambda d: speech.feed(utt, d), cue=True)
                 result = await brain_instance.turn(text, origin="user",
                                                    on_delta=hold.delta,
                                                    on_tool=hold.tool_started)
@@ -1651,17 +1684,17 @@ async def _handle_utterance(text: str) -> None:
                 await speech.end_turn(utt)  # a turn that never ends would wedge the mouth
         except Exception as e:
             log.error(f"brain turn failed: {e}", exc_info=True)
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL)
+            await speech.say("J'ai perdu le fil, monsieur. Pouvez-vous répéter ?", Priority.NORMAL)
             return
         if result.stop_reason == "rate_limited":
             resets = (result.rate_limit or {}).get("resetsAt")
-            await speech.say(f"I've hit the usage limit until {_fmt_reset(resets)}, sir.", Priority.NORMAL)
+            await speech.say(f"J'ai atteint ma limite d'utilisation jusqu'à {_fmt_reset(resets)}.", Priority.NORMAL)
         elif result.stop_reason == "error":
             log.error(f"brain error: {result.error}")
-            await speech.say("My language systems returned an error, sir. Check the server log.",
+            await speech.say("J'ai eu une erreur, monsieur. Regardez le journal du serveur.",
                              Priority.NORMAL)
         elif result.stop_reason in ("timeout", "died", "not_running"):
-            await speech.say("I lost my train of thought, sir. Say that again?", Priority.NORMAL)
+            await speech.say("J'ai perdu le fil, monsieur. Pouvez-vous répéter ?", Priority.NORMAL)
         elif not result.text.strip():
             await _voice_emit({"type": "status", "state": "idle"})
         log.info(f"JARVIS: {result.text.strip()[:300]}")
@@ -2407,6 +2440,7 @@ TAINT_EXEMPT_TOOLS = {
     "run_command": "it runs a command, it does not read",
     "open_in_browser": "it opens a window, it does not read",
     "open_in_terminal": "it opens a window, it does not read",
+    "focus_session": "it raises a window, it does not read",
     "open_in_editor": "it opens a window, it does not read",
     "enable_session_inbox": "it edits a settings file, it does not read",
     "remember": "it writes a memory, it does not read",
@@ -2443,7 +2477,7 @@ UNTRUSTED_READING_TOOLS = {"read_page", "look_at_page", "github_repo",
 # to carry anywhere, and refusing it would break the flow that is most of what
 # JARVIS is for: "what's it asking?" (which reads a transcript, and taints)
 # "… allow it".
-TAINT_EXEMPT_ACTING = {"answer_dialog"}
+TAINT_EXEMPT_ACTING = {"answer_dialog", "focus_session"}
 
 # Writers whose output outlives the turn. `jarvis_memory.write_memory` puts
 # the model's text verbatim into `memory/*.md` and `add_to_index` into
@@ -2975,6 +3009,12 @@ def _state_word(state) -> str:
 # form that stays grammatical no matter what string lands in it. Never emit
 # "a" + an unknown reason: "waiting on a input needed" is exactly the bug
 # this table exists to prevent.
+_NEEDS_SPOKEN_FR = {
+    "permission prompt": "une permission",
+    "dialog open": "une réponse dans une fenêtre",
+    "input needed": "votre réponse",
+}
+
 _NEEDS_PHRASES = {
     "permission prompt": "a permission prompt",
     "dialog open": "a dialog",
@@ -3009,7 +3049,7 @@ def _session_line(s, now) -> str:
     """One conversation, in full: state, why it's waiting (if it is), age,
     what it's on, and whether JARVIS can reach it."""
     age = _say_age(now - s.since) if s.since else "at some point"
-    bits = [f"  {_said_name(s, 'one of them')}: "
+    bits = [f"  {s.number}. {_said_name(s, 'one of them')}: "
             f"{_state_word(s.state)}"]
     if s.needs:
         bits.append(_phrase_needs(s.needs)
@@ -3278,6 +3318,16 @@ def tool_session_detail(args: dict) -> str:
         body.append(f"You last told it: {session.last_prompt}")
     if session.last_text:
         body.append(f"It last said: {session.last_text}")
+    # The roster lags: a session that just got his message still reads
+    # "idle, 2 hours ago", and he told the user it never arrived — twice.
+    sent = [s for s in run_store.list_steers(20)
+            if s["session_id"] == session.session_id and s["outcome"] == "sent"
+            and _time.time() - s["created_at"] < 600]
+    if sent:
+        ago = int(_time.time() - sent[0]["created_at"])
+        head.append(f"You sent it a message {ago} seconds ago; it has been "
+                    f"delivered. It may not show as working yet — never say "
+                    f"it did not arrive.")
     detail = "\n".join(head)
     if body:
         detail += "\n" + _wrap_untrusted(_SESSION_WRAP_NAME, "\n".join(body))
@@ -3309,6 +3359,8 @@ def tool_list_projects(args: dict) -> str:
 
 
 STEER_CANCEL_WINDOW = float(os.getenv("JARVIS_STEER_CANCEL_WINDOW", "2.0"))
+# A steer reads back only the session's name now, so its window is shorter.
+STEER_SEND_WINDOW = float(os.getenv("JARVIS_STEER_SEND_WINDOW", "1.0"))
 # How long to wait for the read-back utterance to actually finish playing
 # before opening the cancel window. speech.say() returns as soon as the
 # utterance is QUEUED, not once it has been heard — a realistic TTS chunk
@@ -3425,8 +3477,9 @@ async def _perform_steer(item: _StagedSteer) -> None:
         if speech is None:
             record("no_voice")             # the mouth went away between turns
             return
-        utt = await speech.say(f"Telling {_said_name(item)}: {item.prompt}",
-                               Priority.NORMAL)
+        # The user asked for the name only: hearing his own sentence read
+        # back cost seconds on every send. "annule" in the window still stops it.
+        utt = await speech.say(f"J'envoie à {_said_name(item)}.", Priority.NORMAL)
         # Wait for the read-back to actually finish PLAYING (not merely be
         # queued — see READBACK_TIMEOUT) before opening the cancel window.
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
@@ -3440,16 +3493,16 @@ async def _perform_steer(item: _StagedSteer) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Annulé.", Priority.NORMAL)
             return
         if not heard:
             # TTS wedged or the transport was abandoned mid-utterance: never
             # send something the user cannot be shown to have heard.
             record("readback_failed")
             return
-        if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
+        if await speech.open_cancel_window(STEER_SEND_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Annulé.", Priority.NORMAL)
             return
 
         outcome = await asyncio.to_thread(
@@ -3468,15 +3521,13 @@ async def _perform_steer(item: _StagedSteer) -> None:
             # here, so it is no longer asserted — and when the setting says
             # the message WILL need approving, that is said in the same
             # breath rather than left for the user to discover.
-            await speech.say(f"Passed to {_said_name(item)}, sir."
-                             + _inbound_caveat(), Priority.NORMAL)
+            await speech.say(f"C'est envoyé à {_said_name(item)}.", Priority.NORMAL)
         elif outcome == session_steer.NOT_LIVE:
             await speech.say(
-                f"{_said_name(item)} didn't answer its socket, sir — it may "
-                f"have just exited.", Priority.NORMAL)
+                f"{_said_name(item)} ne répond pas, la session vient "
+                f"peut-être de se fermer.", Priority.NORMAL)
         else:
-            await speech.say(f"I couldn't deliver that to {_said_name(item)}, "
-                             f"sir.", Priority.NORMAL)
+            await speech.say(f"Je n'ai pas pu l'envoyer à {_said_name(item)}.", Priority.NORMAL)
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -3535,14 +3586,14 @@ async def _perform_command(item: _StagedCommand) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Annulé.", Priority.NORMAL)
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Annulé.", Priority.NORMAL)
             return
 
         # `cd` into the project first: a start command means nothing in the
@@ -3557,7 +3608,7 @@ async def _perform_command(item: _StagedCommand) -> None:
                 f"Running in a Terminal window, sir.", Priority.NORMAL)
         else:
             record("failed")
-            await speech.say("Terminal wouldn't open, sir.", Priority.NORMAL)
+            await speech.say("Le terminal ne s'est pas ouvert.", Priority.NORMAL)
     except Exception:
         record("failed")                   # the audit trail must never have a gap
         raise
@@ -3644,14 +3695,14 @@ async def _perform_dialog(item: _StagedDialog) -> None:
                 record("readback_failed")
                 return
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Annulé.", Priority.NORMAL)
             return
         if not heard:
             record("readback_failed")
             return
         if await speech.open_cancel_window(STEER_CANCEL_WINDOW):
             record("cancelled_by_user")
-            await speech.say("Cancelled, sir.", Priority.NORMAL)
+            await speech.say("Annulé.", Priority.NORMAL)
             return
 
         outcome = await dialog.answer(item.pid, item.key)
@@ -3848,18 +3899,14 @@ async def tool_steer_session(args: dict) -> str:
                               project=session.project,
                               prompt=prompt,
                               socket_path=session.socket_path))
-    staged_note = (f"staged — I'll read it back to the user and send it to "
-                   f"{_said_name(session)} the moment this turn ends, unless "
-                   f"he stops me. Say briefly that it is going out and end "
-                   f"your turn; do not call this tool again for it.")
-    if not _inbound_accepted():
-        # The brain must not say "sent" when the message will sit unapproved
-        # in the other window — which is exactly what happened live.
-        staged_note += (" NOTE: that session is not set to accept inbound "
-                        "messages, so it will ask the user to approve it. Say "
-                        "that too, and that you can turn it on if he wants "
-                        "(enable_session_inbox) — never do that unasked.")
-    return staged_note
+    # The read-back IS the confirmation. Anything the brain adds is spoken
+    # before it and only delays the send: live, a sentence about approvals
+    # plus the read-back kept the user waiting half a minute. On this
+    # machine messages land without approval, so no caveat either.
+    return (f"staged — I read it back to the user and send it to "
+            f"{_said_name(session)} as soon as this turn ends. That read-back "
+            f"is the confirmation: end your turn NOW and write no text at all. "
+            f"Do not call this tool again for it.")
 
 
 # A project is named by a DIRECTORY, and a directory name may hold a quote, an
@@ -4880,8 +4927,28 @@ async def tool_open_in_terminal(args: dict) -> str:
         return problem
     result = await actions.open_terminal(f"cd {shlex.quote(path)}")
     if not result.get("success"):
-        return result.get("confirmation") or "Terminal wouldn't open, sir."
+        return result.get("confirmation") or "Le terminal ne s'est pas ouvert."
     return f"Terminal's open in {name}, sir."
+
+
+async def tool_focus_session(args: dict) -> str:
+    """Raise the window a session runs in — the same path as the dashboard
+    click, so only that window comes forward, not every Warp window."""
+    global last_mentioned_session
+    session, problem, _reason = _resolve_or_explain(str(args.get("name") or ""))
+    if problem:
+        return problem
+    last_mentioned_session = session.session_id
+    pid = session.primary_pid or (session.pids[0] if session.pids else None)
+    if pid is None:
+        return f"{_said_name(session)} has no terminal I can bring up."
+    outcome = await window_focus.focus(pid, session.roster_name)
+    if outcome == window_focus.FOCUSED:
+        return f"{_said_name(session)} is in front now."
+    if outcome == window_focus.NOT_PERMITTED:
+        return ("macOS won't let me move windows yet: allow Warp under System "
+                "Settings, Privacy, Accessibility.")
+    return f"I couldn't bring {_said_name(session)} up ({outcome})."
 
 
 async def tool_enable_session_inbox(args: dict) -> str:
@@ -4912,6 +4979,7 @@ TOOL_HANDLERS.update({
     "cancel_run": tool_cancel_run,
     "open_in_browser": tool_open_in_browser,
     "open_in_terminal": tool_open_in_terminal,
+    "focus_session": tool_focus_session,
     "enable_session_inbox": tool_enable_session_inbox,
 })
 # It writes to the user's own Claude Code configuration. Nothing but the
@@ -4919,7 +4987,7 @@ TOOL_HANDLERS.update({
 ACTING_TOOLS.add("enable_session_inbox")
 # Both put a window on the user's screen and take their focus to do it. A
 # line in somebody else's transcript must not be able to open anything.
-ACTING_TOOLS.update({"open_in_browser", "open_in_terminal"})
+ACTING_TOOLS.update({"open_in_browser", "open_in_terminal", "focus_session"})
 # create_project writes a directory into the user's filesystem and cancel_run
 # kills a process. Both are things JARVIS may only do when the user is the one
 # asking — a line in somebody else's transcript must not reach either.

@@ -24,10 +24,10 @@ async def test_sends_balanced_latency_and_assembles_stream():
         return httpx.Response(200, content=b"ID3" + b"\x00" * 100)
 
     async with _client(handler) as c:
-        r = await tts.synthesize_chunk("Good evening, sir.", api_key="k", voice_id="v", client=c)
+        r = await tts.synthesize_chunk("Bonsoir, monsieur.", api_key="k", voice_id="v", client=c)
     assert seen["url"] == tts.FISH_TTS_URL
     assert seen["auth"] == "Bearer k"
-    assert seen["body"] == {"text": "Good evening, sir.", "reference_id": "v",
+    assert seen["body"] == {"text": "Bonsoir, monsieur.", "reference_id": "v",
                             "format": "mp3", "mp3_bitrate": 128, "latency": "balanced"}
     assert r is not None and r.audio.startswith(b"ID3") and len(r.audio) == 103
     assert r.first_byte_sec >= 0 and r.total_sec >= r.first_byte_sec

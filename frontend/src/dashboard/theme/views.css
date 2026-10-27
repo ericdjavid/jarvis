@@ -686,3 +686,33 @@
   .orbit-stats, .orbit-hint { display: none; }
 }
 .orbit-bars i.is-empty { opacity: .25; min-height: 2px; }
+
+/* ── Voice dock (JARVIS's voice inside the dashboard) ─────────────────── */
+.voice-dock {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  z-index: 50; display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px; max-width: calc(100vw - 32px);
+  background: rgba(4, 18, 46, 0.78); backdrop-filter: blur(8px);
+  border: 1px solid rgba(120, 180, 255, 0.28); border-radius: 999px;
+  color: #cfe6ff; font: 300 12px/1.2 inherit; letter-spacing: .08em;
+}
+.voice-dock.is-awake { border-color: rgba(120, 200, 255, 0.85); box-shadow: 0 0 18px rgba(77, 163, 255, .35); }
+.voice-dock[data-mode="off"] { opacity: .6; }
+.voice-mode {
+  background: none; border: 1px solid rgba(120, 180, 255, 0.35); border-radius: 999px;
+  color: inherit; font: inherit; text-transform: uppercase; padding: 5px 10px; cursor: pointer;
+}
+.voice-dock.is-awake .voice-mode { color: #fff; border-color: #7cc4ff; }
+.voice-dock[data-mode="off"] .voice-mode { color: #ff8da1; border-color: rgba(255, 77, 109, .5); }
+.voice-level {
+  --level: 0; width: 8px; height: 8px; border-radius: 50%;
+  background: #4da3ff; opacity: calc(.25 + var(--level) * .75);
+  transform: scale(calc(1 + var(--level)));
+}
+.voice-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+.voice-status:empty { display: none; }
+.voice-stop {
+  background: none; border: 1px solid rgba(255, 210, 122, .6); border-radius: 999px;
+  color: #ffd27a; font: inherit; padding: 5px 10px; cursor: pointer;
+}
+.voice-stop[hidden] { display: none; }

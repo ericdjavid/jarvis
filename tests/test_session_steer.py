@@ -205,8 +205,8 @@ async def test_performing_a_staged_steer_reads_it_back_before_sending(
     await server._perform_staged_steers()
 
     assert speech.said, "he must read it back first"
-    assert "use Postgres" in speech.said[0]
-    assert speech.said[-1] == "Passed to chitauri, sir."
+    assert speech.said[0] == "J'envoie à chitauri."   # the name only, by request
+    assert speech.said[-1] == "C'est envoyé à chitauri."
     _wait_for_receipt(received)
     assert json.loads(received[0].strip())["message"]["content"] == "use Postgres"
     assert server._staged_steers == [], "a performed steer must be off the list"
@@ -607,6 +607,7 @@ class TurnRig:
         monkeypatch.setattr(server, "speech", self.h.sched)
         monkeypatch.setattr(server, "brain_instance", self.brain)
         monkeypatch.setattr(server, "STEER_CANCEL_WINDOW", cancel_window)
+        monkeypatch.setattr(server, "STEER_SEND_WINDOW", cancel_window)
 
     async def __aenter__(self):
         await self.h.sched.start()
@@ -656,7 +657,7 @@ async def test_the_readback_plays_after_the_turn_and_before_delivery(
     async with TurnRig(server, monkeypatch, [_steer_args()]) as rig:
         await asyncio.wait_for(rig.start(), timeout=15)
         # `say` returns once QUEUED; let the outcome line actually be spoken.
-        await rig.wait_until_speaking("Passed to chitauri, sir.")
+        await rig.wait_until_speaking("C'est envoyé à chitauri.")
 
     # (b) the tool call itself is fast: it validates and stages, nothing more.
     assert rig.brain.tool_seconds[0] < 0.5, rig.brain.tool_seconds
@@ -665,7 +666,7 @@ async def test_the_readback_plays_after_the_turn_and_before_delivery(
     # (a) the read-back is a LATER utterance than the turn, and every frame
     # of the turn was spoken before it.
     audio = rig.audio()
-    readback = [m for m in audio if m["text"].startswith("Telling chitauri")]
+    readback = [m for m in audio if m["text"].startswith("J'envoie à chitauri")]
     assert readback, f"the read-back never played: {rig.spoken()}"
     turn_utt = audio[0]["utt"]
     first_readback = audio.index(readback[0])
@@ -676,11 +677,11 @@ async def test_the_readback_plays_after_the_turn_and_before_delivery(
     # nothing reached the socket until the read-back had been heard
     _wait_for_receipt(received)
     assert received, "the steer must actually be delivered"
-    heard_at = rig.client.acked_at("Telling chitauri")
+    heard_at = rig.client.acked_at("J'envoie à chitauri")
     assert heard_at is not None
     assert received[0][0] > heard_at, "delivery must follow the read-back"
     assert json.loads(received[0][1].strip())["message"]["content"] == "use Postgres"
-    assert "Passed to chitauri, sir." in rig.spoken()
+    assert "C'est envoyé à chitauri." in rig.spoken()
 
     import run_store
     rows = run_store.list_steers(limit=50)
@@ -727,10 +728,10 @@ async def test_a_barge_in_during_the_readback_blocks_the_send(
                         lambda n: (_fake_session_state(path), None, None))
 
     async with TurnRig(server, monkeypatch, [_steer_args(prompt="drop it")],
-                       skip_ack=lambda t: t.startswith("Telling"),
+                       skip_ack=lambda t: t.startswith("J'envoie"),
                        cancel_window=2.0) as rig:
         task = rig.start()
-        await rig.wait_until_speaking("Telling chitauri")
+        await rig.wait_until_speaking("J'envoie à chitauri")
         assert await rig.h.sched.user_final("no actually hold off there") == "speech"
         await asyncio.wait_for(task, timeout=15)
 
@@ -751,7 +752,7 @@ async def test_a_wedged_readback_sends_nothing_and_records_readback_failed(
     monkeypatch.setattr(server, "READBACK_TIMEOUT", 0.3)
 
     async with TurnRig(server, monkeypatch, [_steer_args(prompt="drop it")],
-                       skip_ack=lambda t: t.startswith("Telling")) as rig:
+                       skip_ack=lambda t: t.startswith("J'envoie")) as rig:
         await asyncio.wait_for(rig.start(), timeout=15)
 
     assert received == [], "nothing may be sent unheard"
@@ -792,7 +793,7 @@ async def test_a_dead_transport_during_the_readback_is_readback_failed_not_cance
     harness = _DyingHarness()
     await harness.sched.start()
     try:
-        harness.die_on_prefix = "Telling"
+        harness.die_on_prefix = "J'envoie"
         monkeypatch.setattr(server, "speech", harness.sched)
         monkeypatch.setattr(server, "brain_instance", FakeBrain())
         monkeypatch.setattr(server, "_resolve_or_explain",
@@ -836,8 +837,8 @@ async def test_two_steers_staged_in_one_turn_are_both_performed_in_order(
     assert first_rx and second_rx, "both steers must be delivered"
     assert first_rx[0][0] < second_rx[0][0], "staged order must be preserved"
     spoken = rig.spoken()
-    assert (spoken.index("Telling chitauri: use Postgres")
-            < spoken.index("Telling hammer: revert the schema"))
+    assert (spoken.index("J'envoie à chitauri.")
+            < spoken.index("J'envoie à hammer."))
 
     import run_store
     rows = run_store.list_steers(limit=50)          # (f), one row each

@@ -18,6 +18,7 @@ import { initProjects, refreshProjects } from "./projects";
 import { initSpecs, refreshSpecs } from "./specs";
 import { initUsage, refreshUsageView } from "./usage";
 import { initOrbit, setOrbitVisible } from "./orbit3d";
+import { initVoiceHud } from "./voice-hud";
 import {
   el, row, readout, bar, pill, setTone, statusDot, statusPill, stateStyle,
   emptyState, flash,
@@ -536,6 +537,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // entirely. It loads up front and polls.
   initUsage();
   initOrbit();
+  initVoiceHud();
   pinOrbitUnderMasthead();
   // Orbit is the landing tab.
   showOrbit(!document.getElementById("orbit-view")?.hidden);

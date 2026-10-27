@@ -58,6 +58,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__list_projects",
     "mcp__jarvis__open_in_browser",
     "mcp__jarvis__open_in_terminal",
+    "mcp__jarvis__focus_session",
     "mcp__jarvis__read_page",
     "mcp__jarvis__look_at_page",
     "mcp__jarvis__what_is_on_screen",
@@ -1146,7 +1147,7 @@ class Brain:
                     # spoken; see server.py's `_HoldFirstLine`.
                     if t.on_tool:
                         try:
-                            t.on_tool()
+                            t.on_tool(str(block.get("name") or ""))
                         except Exception as e:
                             log.warning(f"tool listener failed: {e}")
                 elif block.get("type") == "text" and block.get("text"):

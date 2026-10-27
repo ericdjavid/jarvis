@@ -77,7 +77,10 @@ TOOL_SPECS = [
         "name": "steer_session",
         "description": (
             "Send a message into a running Claude Code session, as if the user had "
-            "typed it. Rewrite what the user said into a clear instruction addressed "
+            "typed it. Call it FIRST and directly with the name the user said — it "
+            "resolves the name itself. Never call list_sessions or session_detail "
+            "before it in the same turn: reading another session blocks every "
+            "send for the rest of that turn. Rewrite what the user said into a clear instruction addressed "
             "to that session: include the decision they made, and never add anything "
             "they did not say. Returns as soon as the message is staged: JARVIS "
             "reads it back aloud and sends it when your turn ends, unless the user "
@@ -88,7 +91,8 @@ TOOL_SPECS = [
             "type": "object",
             "properties": {
                 "name": {"type": "string",
-                         "description": "The session as the user refers to it."},
+                         "description": ("The session as the user refers to it — "
+                                         "its name, or its number: '3'.")},
                 "prompt": {"type": "string",
                            "description": "The message to send, already rewritten."},
             },
@@ -455,6 +459,23 @@ TOOL_SPECS = [
                 "service": {"type": "string",
                             "description": "One service, as the user named it."},
             },
+        },
+    },
+    {
+        "name": "focus_session",
+        "description": (
+            "Bring the terminal window one Claude Code session runs in to the "
+            "front, and only that window — the voice version of clicking it in "
+            "the dashboard. Use it when the user asks to open, show, go to or "
+            "switch to a session ('ouvre MonApp'). Say it in a few words "
+            "and end the turn."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The session as the user refers to it."},
+            },
+            "required": ["name"],
         },
     },
     {

@@ -24,7 +24,7 @@ def _split_all(text, **kw):
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("Good evening, sir. All systems nominal.", ["Good evening, sir.", "All systems nominal."]),
+    ("Bonsoir, monsieur. All systems nominal.", ["Bonsoir, monsieur.", "All systems nominal."]),
     ("Really?! Yes. Quite.", ["Really?!", "Yes.", "Quite."]),
     ("Mr. Rogers is here. Dr. Who left.", ["Mr. Rogers is here.", "Dr. Who left."]),
     ("It costs 3.5 dollars. Edit server.py first.", ["It costs 3.5 dollars.", "Edit server.py first."]),

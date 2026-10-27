@@ -440,7 +440,9 @@ def _check_screen_recording_sync() -> Check:
 
 
 def _check_fish_api_key_sync() -> Check:
-    """FISH_API_KEY must be set or JARVIS has no voice."""
+    """FISH_API_KEY or ELEVENLABS_API_KEY must be set or JARVIS has no voice."""
+    if os.environ.get("ELEVENLABS_API_KEY"):
+        return Check(name="fish_api_key", status=STATUS_OK, message="ELEVENLABS_API_KEY is set.")
     if os.environ.get("FISH_API_KEY"):
         return Check(name="fish_api_key", status=STATUS_OK, message="FISH_API_KEY is set.")
     return Check(

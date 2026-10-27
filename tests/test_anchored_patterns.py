@@ -261,6 +261,8 @@ def test_there_are_gates_to_check():
 # below would SKIP, and a skipped check is a check that is not being made.
 SAMPLES = {
     "FULL_NAME_RE": "owner/name",
+    "_AUTO_ROSTER": "myproject-8d",
+    "_NUMBER_REF": "la 3",
     "_MODEL_ID_RE": "claude-sonnet-5",
     "_URL_RE": "https://github.com/owner/name",
     "_INDEX_LINE_RE": "- [a fact](a-fact.md) — the hook",

@@ -56,7 +56,7 @@ async def test_an_announcement_says_when_you_must_act_yourself(wired, monkeypatc
     # needs_a_human_hand=True in the fixture: the line must actually say the
     # user has to act themselves, not just name the reason. Checking only
     # "permission" would still pass with that clause deleted entirely.
-    assert "keystroke" in text or "yourself" in text
+    assert "keystroke" in text or "yourself" in text or "à vous" in text
 
 
 @pytest.mark.asyncio

@@ -146,6 +146,12 @@ const spinners: { obj: THREE.Object3D; speed: number }[] = [];
 let reactor: THREE.Group;
 let coreDot: THREE.Mesh;
 let coreShell: THREE.Mesh;
+let coreHit: THREE.Mesh;
+let listening = false;   // JARVIS is awake (heard his name, or the core was clicked)
+let voiceState = "idle";
+let act = 0;             // 0 asleep → 1 awake, eased so waking is a build-up, not a switch
+let halo: THREE.Group;   // outer ring that unfolds as he wakes
+const waves: { mesh: THREE.Mesh; t: number }[] = [];
 let dust: THREE.Points;
 let jump: { t: number; glyph: Glyph } | null = null;
 const pointer = new THREE.Vector2();
@@ -167,7 +173,11 @@ function buildReactor(): THREE.Group {
   coreShell = new THREE.Mesh(new THREE.IcosahedronGeometry(1.25, 1),
     new THREE.MeshBasicMaterial({ color: BLUE, wireframe: true, transparent: true, opacity: 0.35,
       blending: THREE.AdditiveBlending, depthWrite: false }));
-  g.add(coreDot, coreShell, ring(0.85, 0.03, ICE, 0.8));
+  coreHit = new THREE.Mesh(new THREE.CircleGeometry(1.6, 24), new THREE.MeshBasicMaterial({ visible: false }));
+  g.add(coreDot, coreShell, coreHit, ring(0.85, 0.03, ICE, 0.8));
+  halo = segmented(3.85, 0.06, 48, 0.6, ICE, 0.9);
+  halo.visible = false;
+  g.add(halo);
 
   spin(segmented(1.75, 0.22, 36, 0.72, BLUE, 0.55), 0.12);
   spin(ring(2.2, 0.025, ICE, 0.6), 0);
@@ -187,7 +197,9 @@ function buildReactor(): THREE.Group {
 
 function buildScene(): void {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Pixel ratio 1 and a 30 fps cap: bloom over a full Retina screen at 120 Hz
+  // was enough to make the whole Mac lag.
+  renderer.setPixelRatio(1);
   renderer.setClearColor(0x000000, 0);
   host.append(renderer.domElement);
 
@@ -233,24 +245,90 @@ function buildScene(): void {
 
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
-  const pick = (e: PointerEvent): string | null => {
+  const aim = (e: PointerEvent): void => {
     const r = renderer.domElement.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
+  };
+  const pick = (e: PointerEvent): string | null => {
+    aim(e);
     const hit = ray.intersectObjects([...glyphs.values()].map((g) => g.hit))[0];
     return (hit?.object.userData.id as string | undefined) ?? null;
   };
+  const onCore = (e: PointerEvent): boolean => { aim(e); return ray.intersectObject(coreHit).length > 0; };
   renderer.domElement.addEventListener("pointermove", (e) => {
     const r = renderer.domElement.getBoundingClientRect();
     pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, ((e.clientY - r.top) / r.height) * 2 - 1);
-    setHover(pick(e));
+    const id = pick(e);
+    setHover(id);
+    if (!id && onCore(e)) renderer.domElement.style.cursor = "pointer";
   });
   renderer.domElement.addEventListener("click", (e) => {
     const id = pick(e as PointerEvent);
     if (id) void focus(id);
+    else if (onCore(e as PointerEvent)) dispatchEvent(new Event("jarvis:wake"));
   });
+  addEventListener("jarvis:awake", (e) => {
+    const now = Boolean((e as CustomEvent<boolean>).detail);
+    if (now && !listening) wake();
+    listening = now;
+  });
+  addEventListener("jarvis:state", (e) => { voiceState = String((e as CustomEvent<string>).detail); });
 
   new ResizeObserver(resize).observe(host);
+}
+
+/** Three shockwaves rolling out of the core, a beat apart. */
+function wake(): void {
+  for (let i = 0; i < 3; i++) {
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.9, 0.96, 96), glowMat(i ? BLUE : ICE, 0));
+    reactor.add(mesh);
+    waves.push({ mesh, t: -i * 0.14 });
+  }
+}
+
+function animateWake(dt: number, t: number): void {
+  // Ease toward the target: about a second up, a little slower back down.
+  act += ((listening ? 1 : 0) - act) * Math.min(1, dt * (listening ? 2.6 : 1.4));
+  const e = act * act * (3 - 2 * act);   // smoothstep: soft start, soft landing
+
+  for (let i = waves.length - 1; i >= 0; i--) {
+    const w = waves[i];
+    w.t += dt;
+    if (w.t < 0) continue;
+    const p = Math.min(1, w.t / 1.3);
+    const out = 1 - Math.pow(1 - p, 3);
+    w.mesh.scale.setScalar(1 + out * 6);
+    (w.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - p) * 0.9;
+    if (p >= 1) {
+      reactor.remove(w.mesh);
+      w.mesh.geometry.dispose();
+      (w.mesh.material as THREE.Material).dispose();
+      waves.splice(i, 1);
+    }
+  }
+
+  // Core: a calm breath asleep; awake it swells, and beats faster while he talks.
+  const beat = voiceState === "speaking" ? Math.sin(t * 9) * 0.12
+    : voiceState === "thinking" ? Math.sin(t * 3) * 0.08 : Math.sin(t * 4) * 0.06;
+  coreDot.scale.setScalar(1 + Math.sin(t * 1.6) * 0.05 * (1 - e) + e * (0.3 + beat));
+  (coreShell.material as THREE.MeshBasicMaterial).opacity = 0.35 + e * 0.45;
+  coreShell.scale.setScalar(1 + e * 0.12);
+  const think = voiceState === "thinking" ? 2 : 1;
+  coreShell.rotation.x += dt * 0.15 * (1 + e * 2) * think;
+  coreShell.rotation.y += dt * 0.22 * (1 + e * 2) * think;
+
+  // The halo unfolds from inside the reactor and turns while he listens.
+  halo.visible = e > 0.01;
+  halo.scale.setScalar(0.7 + e * 0.3);
+  halo.rotation.z -= dt * (0.2 + e * 0.6);
+  halo.children.forEach((c, i) => {
+    const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    // segments light up one after another as `e` climbs
+    m.opacity = Math.max(0, Math.min(1, e * 1.6 - i / halo.children.length * 0.6)) * 0.8;
+  });
+
+  if (!jump) bloom.strength = 0.85 + e * 0.55;
 }
 
 function resize(): void {
@@ -305,7 +383,7 @@ function paintGlyph(g: Glyph, s: SessionRow): void {
   for (const m of [g.dot, g.frame, g.arc, g.ripple]) (m.material as THREE.MeshBasicMaterial).color.copy(c);
   (g.link.material as THREE.LineBasicMaterial).color.copy(c);
   g.tag.element.className = `orbit-tag is-${kind}${hovered === s.session_id ? " is-hover" : ""}`;
-  g.tagName.textContent = nameOf(s);
+  g.tagName.textContent = s.number ? `${s.number} · ${nameOf(s)}` : nameOf(s);
   g.tagState.textContent = LABEL[kind];
   g.row = s;
 }
@@ -363,7 +441,7 @@ function paintList(): void {
     const li = el("li", `orbit-card is-${kind}${hovered === s.session_id ? " is-hover" : ""}`);
     li.dataset.id = s.session_id;
     const head = el("div", "orbit-row");
-    head.append(el("span", "orbit-key", i < 9 ? String(i + 1).padStart(2, "0") : "··"),
+    head.append(el("span", "orbit-key", String(s.number ?? i + 1).padStart(2, "0")),
       el("span", "orbit-name", nameOf(s)), el("span", "orbit-state", LABEL[kind]));
     const topic = el("div", "orbit-topic", s.title || s.project || s.cwd);
     const text = kind === "blocked" ? (s.needs ?? "")
@@ -452,15 +530,18 @@ function chime(k: Kind): void {
 
 // ── loop ───────────────────────────────────────────────────────────────────
 
-function frame(): void {
+const FRAME_MS = 1000 / 30;
+let lastFrame = 0;
+
+function frame(now: number): void {
   frameId = requestAnimationFrame(frame);
+  if (now - lastFrame < FRAME_MS) return;
+  lastFrame = now;
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
 
-  for (const s of spinners) s.obj.rotation.z += dt * s.speed;
-  const breathe = 1 + Math.sin(t * 1.6) * 0.05;
-  coreDot.scale.setScalar(breathe);
-  coreShell.rotation.x += dt * 0.15;
-  coreShell.rotation.y += dt * 0.22;
+  const spinUp = 1 + act * act * 2.5;     // the rings wind up as he wakes
+  for (const s of spinners) s.obj.rotation.z += dt * s.speed * spinUp;
+  animateWake(dt, t);
   dust.rotation.y = Math.sin(t * 0.03) * 0.08;
 
   for (const g of glyphs.values()) {
@@ -561,7 +642,7 @@ export function setOrbitVisible(on: boolean): void {
     resize();
     void refresh();
     if (!pollId) pollId = window.setInterval(() => void refresh(), POLL_MS);
-    if (!frameId) { clock.getDelta(); frame(); }
+    if (!frameId) { clock.getDelta(); frame(performance.now()); }
   } else {
     cancelAnimationFrame(frameId);
     frameId = 0;
@@ -579,7 +660,7 @@ export function initOrbit(): void {
     if (!visible || e.metaKey || e.ctrlKey || e.altKey) return;
     if ((e.target as HTMLElement).closest("input, textarea")) return;
     const i = Number(e.key);
-    if (i >= 1 && i <= 9) { const s = ordered()[i - 1]; if (s) void focus(s.session_id); }
+    if (i >= 1 && i <= 9) { const s = rows.find((r) => r.number === i); if (s) void focus(s.session_id); }
     if (e.key.toLowerCase() === "m") soundOn = !soundOn;
   });
 }
