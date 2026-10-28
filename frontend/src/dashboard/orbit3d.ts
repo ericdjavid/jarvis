@@ -15,6 +15,7 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import {
   listSessions, focusSession, FOCUS_MESSAGES, type SessionRow,
+  listClosedSessions, reopenSession, type ClosedSession,
 } from "./api";
 import { el } from "./ui";
 
@@ -491,6 +492,47 @@ function setHover(id: string | null): void {
   renderer.domElement.style.cursor = id ? "pointer" : "";
 }
 
+// ── history: closed conversations, reopened with `claude --resume` ────────
+
+let historyEl: HTMLElement;
+let showingHistory = false;
+
+async function paintHistory(): Promise<void> {
+  let closed: ClosedSession[];
+  try {
+    closed = await listClosedSessions(15);
+  } catch {
+    historyEl.replaceChildren(el("li", "orbit-empty", "Historique indisponible"));
+    return;
+  }
+  if (!closed.length) {
+    historyEl.replaceChildren(el("li", "orbit-empty", "Aucune session fermée"));
+    return;
+  }
+  historyEl.replaceChildren(...closed.map((c) => {
+    const li = el("li", "orbit-card is-closed");
+    const head = el("div", "orbit-row");
+    head.append(el("span", "orbit-name", c.name || c.title || c.project),
+      el("span", "orbit-state", "ROUVRIR"));
+    const topic = el("div", "orbit-topic", c.name ? (c.title ?? c.project) : c.project);
+    const msg = el("div", "orbit-msg", c.last_prompt ?? "");
+    const meta = el("div", "orbit-meta", `${c.project} · fermée il y a ${ago(c.ended)}`);
+    li.append(head, topic, msg, meta);
+    li.addEventListener("click", () => void reopen(c, li));
+    return li;
+  }));
+}
+
+async function reopen(c: ClosedSession, li: HTMLElement): Promise<void> {
+  if (li.classList.contains("is-busy")) return;
+  li.classList.add("is-busy");
+  blip(1320, 0.06);
+  const ok = await reopenSession(c.session_id);
+  toast(ok ? `${c.name || c.title || c.project} · rouverte` : "Impossible de rouvrir cette session", !ok);
+  // It is live again now: the next poll moves it back to the queue.
+  window.setTimeout(() => { if (showingHistory) void paintHistory(); }, 4000);
+}
+
 let toastTimer = 0;
 function toast(text: string, bad: boolean): void {
   toastEl.textContent = text;
@@ -625,9 +667,23 @@ function buildShell(view: HTMLElement): void {
 
   const side = el("aside", "orbit-panel");
   const head = el("div", "orbit-panel-head");
-  head.append(el("span", undefined, "FILE D'ATTENTION"), el("i"));
+  const queueTab = el("button", "orbit-tab is-on", "FILE D'ATTENTION");
+  const historyTab = el("button", "orbit-tab", "HISTORIQUE");
+  head.append(queueTab, historyTab, el("i"));
   listEl = el("ol", "orbit-list");
-  side.append(head, listEl);
+  historyEl = el("ol", "orbit-list");
+  historyEl.hidden = true;
+  const show = (history: boolean) => {
+    showingHistory = history;
+    queueTab.classList.toggle("is-on", !history);
+    historyTab.classList.toggle("is-on", history);
+    listEl.hidden = history;
+    historyEl.hidden = !history;
+    if (history) void paintHistory();
+  };
+  queueTab.addEventListener("click", () => show(false));
+  historyTab.addEventListener("click", () => show(true));
+  side.append(head, listEl, historyEl);
 
   const hint = el("div", "orbit-hint", "1–9  sauter      clic  ouvrir la fenêtre      M  son");
   toastEl = el("div", "orbit-toast");

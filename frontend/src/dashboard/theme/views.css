@@ -649,6 +649,15 @@
 .orbit-panel-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; font-size: 9px;
   letter-spacing: .32em; color: var(--o-ice); }
 .orbit-panel-head i { flex: 1; height: 1px; background: linear-gradient(90deg, var(--o-line), transparent); }
+.orbit-tab { all: unset; cursor: pointer; font-size: 9px; letter-spacing: .32em; color: var(--o-ice); opacity: .4;
+  padding-bottom: 3px; border-bottom: 1px solid transparent; transition: opacity .2s; }
+.orbit-tab:hover { opacity: .75; }
+.orbit-tab.is-on { opacity: 1; border-bottom-color: var(--o-ice); }
+.orbit-tab:focus-visible { outline: 1px solid var(--o-ice); outline-offset: 3px; }
+.orbit-list[hidden] { display: none; }
+.orbit-card.is-closed { --c: #6f8bb3; }
+.orbit-card.is-busy { opacity: .5; pointer-events: none; }
+.orbit-empty { padding: 18px 14px; font: 300 12px var(--font-ui); color: rgba(169, 212, 255, .45); }
 .orbit-list { list-style: none; margin: 0; padding: 0 10px 10px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--o-line) transparent; }
 
 .orbit-card { position: relative; padding: 12px 12px 12px 14px; margin-bottom: 2px; cursor: pointer;

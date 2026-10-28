@@ -216,6 +216,30 @@ export const FOCUS_MESSAGES: Record<FocusOutcome, string> = {
   failed: "Échec de l'ouverture de la fenêtre",
 };
 
+/** A conversation that is no longer running (`session_history.py`). */
+export interface ClosedSession {
+  session_id: string;
+  name: string | null;
+  title: string | null;
+  last_prompt: string | null;
+  cwd: string;
+  project: string;
+  ended: number;
+}
+
+export async function listClosedSessions(limit = 15): Promise<ClosedSession[]> {
+  const body = await get<{ sessions: ClosedSession[] }>(`/api/sessions/history?limit=${limit}`);
+  return body.sessions;
+}
+
+/** `claude --resume` in a new Warp window. */
+export async function reopenSession(sessionId: string): Promise<boolean> {
+  const res = await fetch(`/api/sessions/history/${encodeURIComponent(sessionId)}/reopen`,
+    { method: "POST" });
+  if (!res.ok) return false;
+  return Boolean(((await res.json()) as { ok: boolean }).ok);
+}
+
 /**
  * JARVIS's long-term memory: a folder of plain Markdown at
  * `<JARVIS_DATA_DIR>/jarvis/` (see `data_paths.py` / `jarvis_memory.py`).

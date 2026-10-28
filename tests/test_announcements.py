@@ -129,7 +129,7 @@ async def test_a_single_completion_names_no_count(wired, monkeypatch):
 
     await server._announce_batch()
 
-    assert speech.calls[0][0] == "chitauri has finished, sir."
+    assert speech.calls[0][0] == "chitauri a terminé, monsieur."
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_two_completions_spell_the_count_and_name_the_noun(wired, monkeypa
     await server._announce_batch()
 
     assert (speech.calls[0][0]
-            == "Two conversations have finished, sir: chitauri and hammer.")
+            == "Deux conversations sont terminées, monsieur : chitauri et hammer.")
 
 
 @pytest.mark.asyncio
@@ -156,8 +156,8 @@ async def test_three_completions_are_all_named(wired, monkeypatch):
 
     await server._announce_batch()
 
-    assert (speech.calls[0][0] == "Three conversations have finished, sir: "
-            "chitauri, hammer and mercer.")
+    assert (speech.calls[0][0] == "Trois conversations sont terminées, monsieur : "
+            "chitauri, hammer et mercer.")
 
 
 @pytest.mark.asyncio
@@ -170,8 +170,8 @@ async def test_four_completions_cap_at_three_names_plus_one_other(wired, monkeyp
 
     await server._announce_batch()
 
-    assert (speech.calls[0][0] == "Four conversations have finished, sir: "
-            "chitauri, hammer and mercer, and one other.")
+    assert (speech.calls[0][0] == "Quatre conversations sont terminées, monsieur : "
+            "chitauri, hammer et mercer, et une autre.")
     assert "delta" not in speech.calls[0][0], \
         "the fourth name must be summarised, not spoken"
 
@@ -186,8 +186,8 @@ async def test_five_completions_cap_at_three_names_plus_two_others(wired, monkey
 
     await server._announce_batch()
 
-    assert (speech.calls[0][0] == "Five conversations have finished, sir: "
-            "chitauri, hammer and mercer, and two others.")
+    assert (speech.calls[0][0] == "Cinq conversations sont terminées, monsieur : "
+            "chitauri, hammer et mercer, et deux autres.")
 
 
 @pytest.mark.asyncio
@@ -200,8 +200,8 @@ async def test_ten_completions_use_a_numeral_but_keep_the_noun(wired, monkeypatc
 
     await server._announce_batch()
 
-    assert (speech.calls[0][0] == "10 conversations have finished, sir: "
-            "chitauri, hammer and mercer, and seven others.")
+    assert (speech.calls[0][0] == "10 conversations sont terminées, monsieur : "
+            "chitauri, hammer et mercer, et sept autres.")
 
 
 @pytest.mark.asyncio

@@ -81,6 +81,7 @@ import usage_store
 import web_auth
 from run_executor import RunExecutor
 import data_paths
+import session_history
 import dialog
 import window_focus
 import jarvis_memory
@@ -1310,11 +1311,30 @@ def _cap_listing(items: list[str]) -> str:
     return _list_join(items[:3]) + f", and {_say_number(remaining)} {other_word}"
 
 
+# The spoken announcements are in French, like the rest of what he says
+# unprompted; the helpers above stay English for the brain's tool results.
+_NUMBER_WORDS_FR = {
+    1: "une", 2: "deux", 3: "trois", 4: "quatre", 5: "cinq",
+    6: "six", 7: "sept", 8: "huit", 9: "neuf",
+}
+
+
+def _cap_listing_fr(items: list[str]) -> str:
+    def join(xs: list[str]) -> str:
+        return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + f" et {xs[-1]}"
+    if len(items) <= 3:
+        return join(items)
+    remaining = len(items) - 3
+    other_word = "autre" if remaining == 1 else "autres"
+    return join(items[:3]) + f", et {_NUMBER_WORDS_FR.get(remaining, str(remaining))} {other_word}"
+
+
 def _session_batch_line(names: list[str]) -> str:
     if len(names) == 1:
-        return f"{names[0]} has finished, sir."
-    return (f"{_say_number(len(names)).capitalize()} conversations have "
-            f"finished, sir: {_cap_listing(names)}.")
+        return f"{names[0]} a terminé, monsieur."
+    count = _NUMBER_WORDS_FR.get(len(names), str(len(names)))
+    return (f"{count.capitalize()} conversations sont terminées, "
+            f"monsieur : {_cap_listing_fr(names)}.")
 
 
 def _run_batch_line(projects: list[str]) -> str:
@@ -1325,7 +1345,7 @@ def _run_batch_line(projects: list[str]) -> str:
     """
     if len(projects) == 1:
         return f"Le travail sur {projects[0]} est terminé."
-    return f"Le travail sur {_cap_listing(projects)} est terminé."
+    return f"Le travail sur {_cap_listing_fr(projects)} est terminé."
 
 
 async def _announce_batch() -> None:
@@ -1441,9 +1461,9 @@ async def _announce_run_failure(run: dict) -> None:
         return
     project = _run_project(run)
     if run.get("status") == run_store.RunStatus.TIMED_OUT:
-        line = f"The work in {project} ran out of time, sir."
+        line = f"Le travail sur {project} a manqué de temps, monsieur."
     else:
-        line = f"The work in {project} failed, sir."
+        line = f"Le travail sur {project} a échoué, monsieur."
     try:
         await speech.say(line, Priority.URGENT)
     except Exception as e:
@@ -1572,6 +1592,8 @@ _TOOL_CUES = {
     "recall": "Je cherche dans ma mémoire.",
     "usage_status": "Je regarde.",
     "spawn_run": "Je lance ça.",
+    "open_session": "J'ouvre la fenêtre.",
+    "reopen_session": "Je la rouvre.",
     "start_build": "Je lance ça.",
     "create_project": "Je m'en occupe.",
 }
@@ -2303,6 +2325,33 @@ async def api_focus_session(session_id: str):
     return {"outcome": outcome}
 
 
+def _live_session_ids() -> set[str]:
+    return {s.session_id for s in _snapshot_or_empty().sessions
+            if s.state != session_watch.GONE}
+
+
+@app.get("/api/sessions/history")
+async def api_session_history(limit: int = session_history.DEFAULT_LIMIT):
+    """The most recent conversations that are no longer running, so one
+    closed by mistake can be reopened."""
+    limit = max(1, min(limit, 50))
+    rows = await asyncio.to_thread(session_history.recent_closed,
+                                   _live_session_ids(), limit)
+    return {"sessions": [session_history.to_dict(r) for r in rows]}
+
+
+@app.post("/api/sessions/history/{session_id}/reopen")
+async def api_reopen_session(session_id: str):
+    """`claude --resume` in a new Warp window. The id must be one the history
+    itself lists, never just any id the browser sends."""
+    item = await asyncio.to_thread(session_history.find, session_id,
+                                   _live_session_ids())
+    if item is None:
+        return JSONResponse(status_code=404, content={"error": "Unknown session"})
+    result = await actions.open_warp_resume(item.cwd, item.session_id)
+    return {"ok": bool(result.get("success"))}
+
+
 # The tool result cap is what keeps the brain's context under budget.
 TOOL_RESULT_CAP = 1500
 
@@ -2440,7 +2489,10 @@ TAINT_EXEMPT_TOOLS = {
     "run_command": "it runs a command, it does not read",
     "open_in_browser": "it opens a window, it does not read",
     "open_in_terminal": "it opens a window, it does not read",
+    "open_session": "it opens a window with a new session, it does not read",
     "focus_session": "it raises a window, it does not read",
+    "reopen_session": ("it opens a window on a closed session; what it says "
+                       "back is only a name through the voice-name wall"),
     "open_in_editor": "it opens a window, it does not read",
     "enable_session_inbox": "it edits a settings file, it does not read",
     "remember": "it writes a memory, it does not read",
@@ -4931,6 +4983,58 @@ async def tool_open_in_terminal(args: dict) -> str:
     return f"Terminal's open in {name}, sir."
 
 
+async def tool_open_session(args: dict) -> str:
+    """A new interactive Claude Code session in its own Warp window, already
+    working on the user's instruction. Unlike spawn_run he can watch it and
+    answer it, and it joins the Orbit under the name given here."""
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        return "There was nothing to start."
+    # A general errand ("check my Claude usage") belongs to no repository:
+    # it goes to the user's own home project when he has set one.
+    reference = (str(args.get("project") or "").strip()
+                 or os.getenv("JARVIS_DEFAULT_PROJECT", "").strip())
+    if not reference:
+        return "Which project should I open it in, sir?"
+    name, path, problem = _resolve_project_or_explain(reference)
+    if problem:
+        return problem
+    label = actions.session_name(str(args.get("name") or "") or prompt[:30])
+    model = _normalise_model(str(args.get("model") or ""))
+    result = await actions.open_warp_session(path, prompt, label, model)
+    if not result.get("success"):
+        return result.get("confirmation") or "Warp ne s'est pas ouvert."
+    return f"Opened a new window, session {label}, in {name}. Say it in a few words."
+
+
+async def tool_reopen_session(args: dict) -> str:
+    """A conversation whose window was closed, back in a new Warp window with
+    `claude --resume` — the voice version of the Orbit's HISTORIQUE tab."""
+    query = str(args.get("name") or "").strip()
+    found = await asyncio.to_thread(session_history.match, query,
+                                    _live_session_ids())
+    found = [f for f in found if os.path.isdir(f.cwd)]
+    if not found:
+        said = _plain_name(query, "")
+        return ("I don't see a closed session"
+                + (f" called {said}" if said else " by that name")
+                + ". If it is still open, focus_session brings it up.")
+    # Several titles can share a word; one the user named outranks them, and
+    # past that the newest is almost always the one he just closed. Only a
+    # tie between NAMED sessions is worth a question.
+    named = [f for f in found if f.name]
+    if len(named) > 1 and len({f.name for f in named}) > 1:
+        labels = [_said_name({"voice_name": f.name}, "one of them") for f in named[:3]]
+        return f"There are {len(named)}: {', '.join(labels)}. Which one?"
+    item = found[0]
+    result = await actions.open_warp_resume(item.cwd, item.session_id)
+    if not result.get("success"):
+        return result.get("confirmation") or "Warp ne s'est pas ouvert."
+    label = _said_name({"voice_name": item.name or item.title or ""}, "the session")
+    return (f"Reopened {label} in a new window, in {item.project}. "
+            f"Say it in a few words.")
+
+
 async def tool_focus_session(args: dict) -> str:
     """Raise the window a session runs in — the same path as the dashboard
     click, so only that window comes forward, not every Warp window."""
@@ -4979,7 +5083,9 @@ TOOL_HANDLERS.update({
     "cancel_run": tool_cancel_run,
     "open_in_browser": tool_open_in_browser,
     "open_in_terminal": tool_open_in_terminal,
+    "open_session": tool_open_session,
     "focus_session": tool_focus_session,
+    "reopen_session": tool_reopen_session,
     "enable_session_inbox": tool_enable_session_inbox,
 })
 # It writes to the user's own Claude Code configuration. Nothing but the
@@ -4987,7 +5093,8 @@ TOOL_HANDLERS.update({
 ACTING_TOOLS.add("enable_session_inbox")
 # Both put a window on the user's screen and take their focus to do it. A
 # line in somebody else's transcript must not be able to open anything.
-ACTING_TOOLS.update({"open_in_browser", "open_in_terminal", "focus_session"})
+ACTING_TOOLS.update({"open_in_browser", "open_in_terminal", "focus_session",
+                     "open_session", "reopen_session"})
 # create_project writes a directory into the user's filesystem and cancel_run
 # kills a process. Both are things JARVIS may only do when the user is the one
 # asking — a line in somebody else's transcript must not reach either.

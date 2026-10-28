@@ -6,10 +6,12 @@ Each function returns {"success": bool, "confirmation": str}.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
 import shutil
+import subprocess
 
 log = logging.getLogger("jarvis.actions")
 
@@ -113,6 +115,75 @@ async def open_terminal(command: str = "") -> dict:
     }
 
 
+CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_DATA_DIR = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+# A plain web address and nothing else may go on Chrome's command line: no
+# space, no quote, and it cannot start with "-" since it starts with http.
+_PLAIN_URL_RE = re.compile(r"https?://[^\s\"'<>\\]+")
+
+
+def _user_chrome_pid() -> int | None:
+    """The Chrome the user is signed into, not one an automation started.
+
+    A debugging tool (chrome-devtools MCP, Playwright) runs a second Google
+    Chrome with its own --user-data-dir. AppleScript's `tell application
+    "Google Chrome"` cannot tell the two apart and opened RevenueCat in the
+    signed-out one. The user's own instance is the one on the default data
+    directory."""
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True,
+                             text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if not cmd.startswith(CHROME_BIN) or "--type=" in cmd:
+            continue
+        data_dir = re.search(r"--user-data-dir=(\S+)", cmd)
+        if data_dir is None or data_dir.group(1).rstrip("/") == CHROME_DATA_DIR:
+            return int(pid)
+    return None
+
+
+def _chrome_profile() -> str | None:
+    """JARVIS_CHROME_PROFILE (a folder name like "Profile 5"), else the
+    profile the user last used."""
+    chosen = os.getenv("JARVIS_CHROME_PROFILE", "").strip()
+    if chosen:
+        return chosen
+    try:
+        with open(os.path.join(CHROME_DATA_DIR, "Local State")) as f:
+            return json.load(f).get("profile", {}).get("last_used") or None
+    except (OSError, ValueError):
+        return None
+
+
+async def _open_in_user_chrome(url: str) -> bool:
+    """Hand the URL to the user's own Chrome, in his profile, and bring that
+    instance to the front. False when there is no such instance to target."""
+    if not _PLAIN_URL_RE.fullmatch(url) or not os.path.exists(CHROME_BIN):
+        return False
+    pid = await asyncio.to_thread(_user_chrome_pid)
+    if pid is None:
+        return False
+    argv = [CHROME_BIN]
+    profile = _chrome_profile()
+    if profile:
+        argv.append(f"--profile-directory={profile}")
+    argv.append(url)
+    # The second process passes the URL to the running instance (same data
+    # directory) and exits; it is never waited on.
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    raise_it = ('tell application "System Events" to set frontmost of '
+                f'(first process whose unix id is {pid}) to true')
+    proc = await asyncio.create_subprocess_exec(
+        "osascript", "-e", raise_it,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    await proc.wait()
+    return True
+
+
 async def open_browser(url: str, browser: str = "chrome") -> dict:
     """Open URL in user's browser (Chrome or Firefox).
 
@@ -137,6 +208,9 @@ async def open_browser(url: str, browser: str = "chrome") -> dict:
         )
     else:
         app_name = "Chrome"
+        if await _open_in_user_chrome(url):
+            return {"success": True,
+                    "confirmation": "Pulled that up in Chrome, sir."}
         script = (
             'tell application "Google Chrome"\n'
             "    activate\n"
@@ -273,3 +347,84 @@ def _generate_project_name(prompt: str) -> str:
             "web", "page", "site", "named"}
     meaningful = [w for w in words if w not in skip and len(w) > 2][:4]
     return "-".join(meaningful) if meaningful else "jarvis-project"
+
+
+# --- a new Claude Code session in its own Warp window ------------------------
+# Warp has no AppleScript, but a launch configuration can open a window in a
+# directory and run a command there, and `warp://launch/<name>` runs one. The
+# prompt never goes into the YAML or a shell line: it sits in a file the
+# command reads, so no quote in the user's words can break out of it. The
+# window is its own, never a tab, so the Orbit click can find it again.
+WARP_LAUNCH_DIR = os.path.expanduser("~/.warp/launch_configurations")
+_SESSION_NAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
+LAUNCH_CLEANUP_SEC = 60.0
+
+
+def session_name(raw: str) -> str:
+    name = _SESSION_NAME_RE.sub("_", raw.strip().upper()).strip("_")
+    return name[:40] or "AGENT"
+
+
+async def _launch_in_warp(cwd: str, cmd: str, files: tuple[str, ...] = ()) -> dict:
+    """Run `cmd` in `cwd` in a new Warp window, via a throwaway launch
+    configuration. `files` are deleted with it once Warp has read them."""
+    import json
+    import secrets
+    tag = f"jarvis-agent-{secrets.token_hex(4)}"
+    os.makedirs(WARP_LAUNCH_DIR, exist_ok=True)
+    config = os.path.join(WARP_LAUNCH_DIR, f"{tag}.yaml")
+    with open(config, "w", encoding="utf-8") as f:
+        f.write("---\n"
+                f"name: {json.dumps(tag)}\n"
+                "windows:\n"
+                "  - tabs:\n"
+                # No `title:`: a fixed tab title ignores the OSC retitle that
+                # window_focus finds windows by, and the session could never
+                # be brought to the front again.
+                "      - layout:\n"
+                f"          cwd: {json.dumps(cwd)}\n"
+                "          commands:\n"
+                f"            - exec: {json.dumps(cmd)}\n")
+    # Warp resolves the link by the configuration's NAME; a path in it is
+    # refused ("couldn't turn launch link into path" in warp.log).
+    proc = await asyncio.create_subprocess_exec(
+        "open", f"warp://launch/{tag}",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    _, stderr = await proc.communicate()
+
+    async def _cleanup():
+        await asyncio.sleep(LAUNCH_CLEANUP_SEC)
+        for path in (config, *files):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    asyncio.get_running_loop().create_task(_cleanup())
+    if proc.returncode != 0:
+        log.error(f"warp launch failed: {stderr.decode()}")
+        return {"success": False, "confirmation": "Warp ne s'est pas ouvert."}
+    return {"success": True, "confirmation": ""}
+
+
+def session_command(prompt_file: str, name: str, model: str = "") -> str:
+    import shlex
+    cmd = f"claude -n {shlex.quote(name)}"
+    if model:
+        cmd += f" --model {shlex.quote(model)}"
+    return cmd + f' "$(cat {shlex.quote(prompt_file)})"'
+
+
+async def open_warp_session(cwd: str, prompt: str, name: str, model: str = "") -> dict:
+    """A new interactive session working on `prompt`, in its own window."""
+    import tempfile
+    fd, prompt_file = tempfile.mkstemp(prefix="jarvis-agent-", suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(prompt)
+    return await _launch_in_warp(cwd, session_command(prompt_file, name, model),
+                                 (prompt_file,))
+
+
+async def open_warp_resume(cwd: str, session_id: str) -> dict:
+    """A closed conversation, back in its own window where it left off."""
+    import shlex
+    return await _launch_in_warp(cwd, f"claude --resume {shlex.quote(session_id)}")

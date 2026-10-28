@@ -29,6 +29,7 @@ import ctypes
 import logging
 import os
 import shutil
+import struct
 import subprocess
 
 import dialog
@@ -47,7 +48,8 @@ WARP_BUNDLE_ID = "dev.warp.Warp-Stable"
 # How long Warp needs to repaint a window title after the OSC lands, measured
 # on this machine to be well under this. Too short and System Events still
 # sees the old title; the cost of too long is a click that feels slow.
-TITLE_SETTLE_SEC = 0.18
+TITLE_SETTLE_SEC = 0.12
+TITLE_ATTEMPTS = 4
 RAISE_TIMEOUT = 6.0
 
 
@@ -122,6 +124,17 @@ _AS.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
 _AS.AXIsProcessTrustedWithOptions.argtypes = [_VP]
 _CF.CFDictionaryCreate.restype = _VP
 _CF.CFDictionaryCreate.argtypes = [_VP, ctypes.POINTER(_VP), ctypes.POINTER(_VP), ctypes.c_long, _VP, _VP]
+# Private, but stable since 10.x and what window switchers (AltTab) rely on:
+# an AX element rebuilt from (pid, element id). AXWindows lists only the
+# windows on the current Space, so a full-screen window, which has a Space of
+# its own, is reachable this way and no other.
+_AS._AXUIElementCreateWithRemoteToken.restype = _VP
+_AS._AXUIElementCreateWithRemoteToken.argtypes = [_VP]
+_CF.CFDataCreate.restype = _VP
+_CF.CFDataCreate.argtypes = [_VP, ctypes.c_char_p, ctypes.c_long]
+# Element ids are small and grow with the windows a run has made; Warp's
+# reached ~260 after a day. Scanning is ~µs per missing id.
+MAX_ELEMENT_ID = 5000
 _prompted = False
 
 # NSRunningApplication through the ObjC runtime: `activateWithOptions:0`
@@ -187,6 +200,32 @@ def _warp_pid() -> int | None:
     return int(digits) if digits.isdigit() else None
 
 
+def _title_has(win, k_title, needle: str) -> bool:
+    title = _VP()
+    if _AS.AXUIElementCopyAttributeValue(win, k_title, ctypes.byref(title)) != 0 \
+            or not title.value:
+        return False
+    found = needle in _str_of(title)
+    _CF.CFRelease(title)
+    return found
+
+
+def _offscreen_window(app_pid: int, k_title, needle: str):
+    """A window of `app_pid` on ANOTHER Space (full screen) whose title
+    contains `needle`, as an owned AX element, or None."""
+    for eid in range(MAX_ELEMENT_ID):
+        token = struct.pack("<iiiq", app_pid, 0, 0x636F636F, eid)   # 'coco'
+        data = _CF.CFDataCreate(None, token, len(token))
+        el = _AS._AXUIElementCreateWithRemoteToken(data)
+        _CF.CFRelease(data)
+        if not el:
+            continue
+        if _title_has(el, k_title, needle):
+            return el
+        _CF.CFRelease(el)
+    return None
+
+
 def _ax_raise_window(app_pid: int, needle: str) -> str:
     """Raise the window of `app_pid` whose title contains `needle`, then make
     the app frontmost. Returns FOCUSED, NOT_FOUND or NOT_PERMITTED."""
@@ -197,29 +236,32 @@ def _ax_raise_window(app_pid: int, needle: str) -> str:
     k_windows, k_title = _cfstr("AXWindows"), _cfstr("AXTitle")
     k_raise, k_main, k_front = _cfstr("AXRaise"), _cfstr("AXMain"), _cfstr("AXFrontmost")
     windows = _VP()
+    offscreen = None
     try:
-        if _AS.AXUIElementCopyAttributeValue(app, k_windows, ctypes.byref(windows)) != 0 \
-                or not windows.value:
+        target = None
+        if _AS.AXUIElementCopyAttributeValue(app, k_windows, ctypes.byref(windows)) == 0 \
+                and windows.value:
+            for i in range(_CF.CFArrayGetCount(windows)):
+                win = _CF.CFArrayGetValueAtIndex(windows, i)
+                if _title_has(win, k_title, needle):
+                    target = win
+                    break
+        if target is None:
+            offscreen = target = _offscreen_window(app_pid, k_title, needle)
+        if target is None:
             return NOT_FOUND
-        for i in range(_CF.CFArrayGetCount(windows)):
-            win = _CF.CFArrayGetValueAtIndex(windows, i)
-            title = _VP()
-            if _AS.AXUIElementCopyAttributeValue(win, k_title, ctypes.byref(title)) != 0:
-                continue
-            found = needle in _str_of(title)
-            _CF.CFRelease(title)
-            if found:
-                _AS.AXUIElementSetAttributeValue(win, k_main, _TRUE)
-                _AS.AXUIElementPerformAction(win, k_raise)
-                if not _activate_main_window_only(app_pid):
-                    # macOS refused the polite activation: fall back to AX,
-                    # which raises every Warp window but at least gets there.
-                    _AS.AXUIElementSetAttributeValue(app, k_front, _TRUE)
-                return FOCUSED
-        return NOT_FOUND
+        _AS.AXUIElementSetAttributeValue(target, k_main, _TRUE)
+        _AS.AXUIElementPerformAction(target, k_raise)
+        if not _activate_main_window_only(app_pid):
+            # macOS refused the polite activation: fall back to AX,
+            # which raises every Warp window but at least gets there.
+            _AS.AXUIElementSetAttributeValue(app, k_front, _TRUE)
+        return FOCUSED
     finally:
         if windows.value:
             _CF.CFRelease(windows)
+        if offscreen:
+            _CF.CFRelease(offscreen)
         for ref in (k_windows, k_title, k_raise, k_main, k_front, app):
             _CF.CFRelease(ref)
 
@@ -229,11 +271,16 @@ async def _focus_warp(pid: int, tty: str, name: str) -> str:
     if app_pid is None:
         return NOT_FOUND
     marker = _marker(pid)
-    if not await asyncio.to_thread(_write_title, tty, marker):
-        return FAILED
-    await asyncio.sleep(TITLE_SETTLE_SEC)
+    # A working session's spinner retitles its window several times a second
+    # and can wipe the marker before the AX read: write it again and retry.
     try:
-        outcome = await asyncio.to_thread(_ax_raise_window, app_pid, marker)
+        for _ in range(TITLE_ATTEMPTS):
+            if not await asyncio.to_thread(_write_title, tty, marker):
+                return FAILED
+            await asyncio.sleep(TITLE_SETTLE_SEC)
+            outcome = await asyncio.to_thread(_ax_raise_window, app_pid, marker)
+            if outcome != NOT_FOUND:
+                break
     finally:
         await asyncio.to_thread(_write_title, tty, name or "claude")
     if outcome == NOT_PERMITTED:

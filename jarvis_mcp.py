@@ -130,8 +130,12 @@ TOOL_SPECS = [
     {
         "name": "spawn_run",
         "description": (
-            "Start NEW Claude Code work in a project, as a recorded run the user "
-            "can watch on the dashboard. For a SMALL, self-contained task — a fix, "
+            "Start NEW Claude Code work in the BACKGROUND, as a recorded run the "
+            "user can watch on the dashboard. ONLY when he says it should run in "
+            "the background ('en arrière-plan', 'en tâche de fond'): 'lance un "
+            "agent / une session qui fait X' is open_session, a window he sees. "
+            "Never create a project to have somewhere to run an errand. "
+            "For a SMALL, self-contained task — a fix, "
             "a tweak, a question about the code that needs changing. A real "
             "project, something being built from scratch or in phases, is "
             "start_build instead, after you have brainstormed it with the user. "
@@ -459,6 +463,54 @@ TOOL_SPECS = [
                 "service": {"type": "string",
                             "description": "One service, as the user named it."},
             },
+        },
+    },
+    {
+        "name": "open_session",
+        "description": (
+            "Open a NEW Claude Code session in its own Warp window, already "
+            "working on an instruction: the user watches it, can answer it, and "
+            "it joins the dashboard under the name you give. THE tool for 'lance "
+            "un agent / une session / une fenêtre qui fait X'. Prefer it to "
+            "spawn_run unless he says it should run in the background. The "
+            "project can be omitted for a general errand that belongs to no "
+            "repository (his usage, his files): his home project is used. Write "
+            "the prompt as the full instruction, in French. Do not ask which "
+            "model unless he brings it up. Say it in a few words and end the "
+            "turn."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string",
+                           "description": "The complete instruction for the new session."},
+                "project": {"type": "string",
+                            "description": "The project as the user refers to it; omit for a general errand."},
+                "name": {"type": "string",
+                         "description": ("A short session name, 2-3 words, e.g. "
+                                         "'conso claude'. It becomes its name in the Orbit.")},
+                "model": {"type": "string",
+                          "description": "Only if the user named one."},
+            },
+            "required": ["prompt", "name"],
+        },
+    },
+    {
+        "name": "reopen_session",
+        "description": (
+            "Bring back a Claude Code session whose window was CLOSED: it opens "
+            "a new Warp window running `claude --resume` on it, in its own "
+            "folder, with its whole conversation. THE tool for 'rouvre / "
+            "reprends / resume la session X', 'celle que j'ai fermée'. Never "
+            "tell him to type `claude --resume` himself. A session that is "
+            "still open is focus_session. Say it in a few words and end the "
+            "turn."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "The session as the user refers to it, e.g. 'sponsor'."},
+            },
+            "required": ["name"],
         },
     },
     {

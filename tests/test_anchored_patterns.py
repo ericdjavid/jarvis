@@ -265,6 +265,7 @@ SAMPLES = {
     "_NUMBER_REF": "la 3",
     "_MODEL_ID_RE": "claude-sonnet-5",
     "_URL_RE": "https://github.com/owner/name",
+    "_PLAIN_URL_RE": "https://app.revenuecat.com/overview",
     "_INDEX_LINE_RE": "- [a fact](a-fact.md) — the hook",
     "_JOURNAL_NAME_RE": "2026-09-04-133912-123456-manual.md",
     "_TABLE_ROW": "|zeltar pro|99|",

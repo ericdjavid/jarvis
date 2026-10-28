@@ -1223,7 +1223,7 @@ def test_an_ordinary_session_completion_still_says_which_one(server, monkeypatch
                                           "voice_name": "hammer in Desktop",
                                           "project": "hammer"}})
     line = server._session_batch_line(list(server._pending_completions))
-    assert line == "hammer in Desktop has finished, sir."
+    assert line == "hammer in Desktop a terminé, monsieur."
     server._pending_completions[:] = []
 
 

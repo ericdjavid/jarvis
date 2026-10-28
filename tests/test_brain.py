@@ -60,7 +60,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__create_project,mcp__jarvis__run_status,"
         "mcp__jarvis__cancel_run,"
         "mcp__jarvis__list_projects,"
-        "mcp__jarvis__open_in_browser,mcp__jarvis__open_in_terminal,mcp__jarvis__focus_session,"
+        "mcp__jarvis__open_in_browser,mcp__jarvis__open_in_terminal,mcp__jarvis__open_session,mcp__jarvis__focus_session,mcp__jarvis__reopen_session,"
         "mcp__jarvis__read_page,mcp__jarvis__look_at_page,"
         "mcp__jarvis__what_is_on_screen,mcp__jarvis__look_at_screen,"
         "mcp__jarvis__github_repo,"

@@ -160,7 +160,7 @@ async def test_a_timeout_is_announced_as_running_out_of_time(wired, monkeypatch)
     server._on_run_event(_finished(status="timed_out"))
     await _drain(server)
 
-    assert "ran out of time" in speech.calls[0][0]
+    assert "manqué de temps" in speech.calls[0][0]
     assert speech.calls[0][1] == server.Priority.URGENT
 
 
@@ -209,7 +209,7 @@ async def test_a_run_and_a_conversation_share_one_utterance(wired, monkeypatch):
 
     assert len(speech.calls) == 1
     text = speech.calls[0][0]
-    assert "hammer has finished" in text
+    assert "hammer a terminé" in text
     assert "Le travail sur chitauri est terminé" in text
 
 
