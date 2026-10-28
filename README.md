@@ -41,6 +41,13 @@ qui fait tourner beaucoup de sessions Claude Code en parallèle dans
 - **Une voix française** grâce à [ElevenLabs](https://elevenlabs.io)
   (modèle `eleven_flash_v2_5`, langue forcée en français), et un JARVIS qui
   répond en français. Fish Audio reste possible.
+- **Lancer un agent dans sa propre fenêtre.** « Lance un agent qui vérifie
+  mes consommations Claude » ouvre une nouvelle fenêtre Warp avec une session
+  Claude Code déjà au travail, nommée et visible dans l'Orbit. Sans projet
+  précisé, elle s'ouvre dans `JARVIS_DEFAULT_PROJECT`.
+- **Rouvrir une session fermée.** L'onglet HISTORIQUE de l'Orbit liste les
+  15 dernières sessions fermées, un clic la relance (`claude --resume`) dans
+  une nouvelle fenêtre. À la voix : « rouvre la session sponsors ».
 - **Des actions en un mot.** Par exemple, « montre-moi mes revenus » ouvre
   votre tableau de bord (RevenueCat, Stripe…) dans votre Chrome déjà connecté.
   Il suffit de lui demander de s'en souvenir une fois.
