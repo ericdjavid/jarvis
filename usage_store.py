@@ -210,6 +210,61 @@ def record(info: Any, *, now: Optional[float] = None) -> Optional[dict]:
     return stored_record
 
 
+# How often a statusline refresh may rewrite the file when nothing moved.
+# The statusline redraws on every message of every open session; the reading
+# only has to stay younger than STALE_AFTER_SEC.
+STATUSLINE_REWRITE_SEC = 60
+
+
+def record_statusline(rate_limits: Any, *, now: Optional[float] = None) -> Optional[dict]:
+    """Persist the `rate_limits` block Claude Code hands its statusline.
+
+    The brain's `rate_limit_event` only arrives while JARVIS himself takes a
+    turn, so a day of work in the user's own sessions left the gauges a day
+    old. Every interactive session sees the same subscription windows in its
+    statusline input, already as percentages: `{"five_hour":
+    {"used_percentage": 23, "resets_at": 1793284800}, ...}`.
+    """
+    if not isinstance(rate_limits, dict):
+        return None
+    when = time.time() if now is None else float(now)
+    stored = latest() or {}
+    windows: dict[str, dict] = {
+        k: dict(v) for k, v in (stored.get("windows") or {}).items()
+        if isinstance(v, dict)
+    }
+
+    changed = False
+    for key, raw in rate_limits.items():
+        if not isinstance(key, str) or not isinstance(raw, dict):
+            continue
+        pct = _stored_percent(raw.get("used_percentage"))
+        if pct is None:
+            continue
+        resets_at = _epoch(raw.get("resets_at"))
+        old = windows.get(key) or {}
+        if old.get("utilization") != pct or old.get("resets_at") != resets_at:
+            changed = True
+        windows[key] = {"utilization": pct, "resets_at": resets_at,
+                        "status": _text(old.get("status")) or "allowed",
+                        "observed_at": when}
+    if not windows:
+        return None
+
+    last = _epoch(stored.get("observed_at"))
+    if not changed and last is not None and when - last < STATUSLINE_REWRITE_SEC:
+        return stored
+
+    stored_record = {
+        "observed_at": when,
+        "status": _text(stored.get("status")),
+        "rate_limit_type": _text(stored.get("rate_limit_type")),
+        "windows": windows,
+    }
+    _write(stored_record)
+    return stored_record
+
+
 # ── the shape the dashboard reads ───────────────────────────────────────────
 
 def _window_view(key: str, raw: Optional[dict], now: float) -> dict:

@@ -220,3 +220,48 @@ def test_unknown_windows_are_kept_not_dropped(store):
     snap = store.snapshot(now=1000.0)
     assert _window(snap, "seven_day_opus")["utilization"] == 40.0
     assert [w["key"] for w in snap["windows"]][:2] == ["five_hour", "seven_day"]
+
+
+# ── the statusline feed: every open session reports the windows ─────────────
+
+STATUSLINE = {"five_hour": {"used_percentage": 23, "resets_at": 1793284800},
+              "seven_day": {"used_percentage": 41.5, "resets_at": 1793286000}}
+
+
+def test_statusline_percentages_are_stored_as_is(store):
+    store.record_statusline(STATUSLINE, now=1793270000)
+    snap = store.snapshot(now=1793270010)
+    by_key = {w["key"]: w for w in snap["windows"]}
+    assert by_key["five_hour"]["utilization"] == 23.0
+    assert by_key["seven_day"]["utilization"] == 41.5
+    assert by_key["five_hour"]["resets_at"] == 1793284800
+    assert not snap["stale"]
+
+
+def test_statusline_one_percent_is_not_a_full_gauge(store):
+    store.record_statusline({"five_hour": {"used_percentage": 1, "resets_at": 1793284800}},
+                            now=1793270000)
+    assert store.latest()["windows"]["five_hour"]["utilization"] == 1.0
+
+
+def test_statusline_refreshes_an_unchanged_reading_once_a_minute(store):
+    store.record_statusline(STATUSLINE, now=1793270000)
+    store.record_statusline(STATUSLINE, now=1793270030)
+    assert store.latest()["observed_at"] == 1793270000
+    store.record_statusline(STATUSLINE, now=1793270070)
+    assert store.latest()["observed_at"] == 1793270070
+
+
+def test_statusline_keeps_windows_it_does_not_mention(store):
+    store.record(LIVE_EVENT, now=1788100000)
+    store.record_statusline({"five_hour": {"used_percentage": 5, "resets_at": 1788117000}},
+                            now=1788100100)
+    windows = store.latest()["windows"]
+    assert windows["five_hour"]["utilization"] == 5.0
+    assert windows["seven_day"]["utilization"] == 78.0
+
+
+def test_statusline_without_limits_writes_nothing(store):
+    assert store.record_statusline(None) is None
+    assert store.record_statusline({"five_hour": {"used_percentage": None}}) is None
+    assert store.latest() is None
