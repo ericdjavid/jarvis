@@ -9,6 +9,9 @@
  */
 
 import { createVoiceInput, createAudioPlayer, createMicMonitor } from "./voice";
+import type { VoiceInput } from "./voice";
+import { createStreamingVoiceInput } from "./listen";
+import type { StreamingInput } from "./listen";
 import { createSocket } from "./ws";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "compacting";
@@ -55,12 +58,17 @@ export function startVoice(hooks: VoiceHooks = {}): VoiceApp {
   let mode: MicMode = loadMode();
   let awakeUntil = 0;
   let muteMicDuringSpeech = false;
+  // Which ear the server offers: Scribe streaming, or Chrome's recogniser.
+  let sttMode: "scribe" | "browser" | null = null;
   let quietSince = 0;                 // when his voice last stopped
   // The server says "idle" once it has SENT the audio; the speaker may still be
   // playing it for seconds. So "is he audible" is asked of the player itself.
   const hearingHim = () => current === "speaking" || audioPlayer.playing()
     || Date.now() - quietSince < ECHO_TAIL_MS;
-  /** While he is audible: a trailing stop word cuts him off, all else is him. */
+  /** While he is audible: a trailing stop word cuts him off, all else is him.
+   *  The streaming ear captures with echo cancellation, so there the rest
+   *  goes up too and the server's echo rules decide: that is what lets the
+   *  user talk over him. */
   function stopWordOnly(text: string, isFinal: boolean): boolean {
     if (!hearingHim()) return false;
     const m = text.match(STOP);
@@ -68,8 +76,9 @@ export function startVoice(hooks: VoiceHooks = {}): VoiceApp {
       hush();
       // The word itself still goes up: a steer's cancel window listens for it.
       if (isFinal || current !== "speaking") socket.send({ type: "transcript", text: m[1], isFinal: true });
+      return true;
     }
-    return true;
+    return sttMode !== "scribe";
   }
 
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -125,22 +134,43 @@ export function startVoice(hooks: VoiceHooks = {}): VoiceApp {
     else voiceInput.resume();
   }
 
-  const voiceInput = createVoiceInput(
-    (text: string) => {
-      micMonitor.sawSpeech();
-      if (stopWordOnly(text, true)) return;
-      if (admit(text)) socket.send({ type: "transcript", text, isFinal: true });
-      else if (mode === "wake") socket.send({ type: "mic", text: `ignored (no wake word): ${text.slice(0, 60)}` });
-    },
-    (text: string) => {
-      micMonitor.sawSpeech();
-      if (stopWordOnly(text, false)) return;
-      if (admit(text)) socket.send({ type: "interim", text });
-      else if (mode === "wake" && text.length > 12) logIgnored(text);
-    },
-    (msg: string) => hooks.onError?.(msg),
-    (event: string) => socket.send({ type: "mic", text: event }),
-  );
+  const onFinal = (text: string) => {
+    micMonitor.sawSpeech();
+    if (stopWordOnly(text, true)) return;
+    if (admit(text)) socket.send({ type: "transcript", text, isFinal: true });
+    else if (mode === "wake") socket.send({ type: "mic", text: `ignored (no wake word): ${text.slice(0, 60)}` });
+  };
+  const onPartial = (text: string) => {
+    micMonitor.sawSpeech();
+    if (stopWordOnly(text, false)) return;
+    if (admit(text)) socket.send({ type: "interim", text });
+    else if (mode === "wake" && text.length > 12) logIgnored(text);
+  };
+  const onMicError = (msg: string) => hooks.onError?.(msg);
+  const onMicEvent = (event: string) => socket.send({ type: "mic", text: event });
+
+  // Built once the server has said which ear it offers (see `boot`). Until
+  // then pause/resume have nothing to act on, and nothing is listening.
+  let inner: VoiceInput | null = null;
+  let streaming: StreamingInput | null = null;
+  const voiceInput: VoiceInput = {
+    start() { inner?.start(); },
+    stop() { inner?.stop(); },
+    pause() { inner?.pause(); },
+    resume() { inner?.resume(); },
+    restart(reason: string) { inner?.restart(reason); },
+  };
+  function buildEar(kind: "scribe" | "browser") {
+    inner?.stop();
+    sttMode = kind;
+    if (kind === "scribe") {
+      streaming = createStreamingVoiceInput((m) => socket.send(m), onFinal, onPartial, onMicError, onMicEvent);
+      inner = streaming;
+    } else {
+      streaming = null;
+      inner = createVoiceInput(onFinal, onPartial, onMicError, onMicEvent);
+    }
+  }
 
   const micMonitor = createMicMonitor(
     (level: number) => hooks.onLevel?.(level),
@@ -165,6 +195,16 @@ export function startVoice(hooks: VoiceHooks = {}): VoiceApp {
     const type = msg.type as string;
     if (type === "config") {
       muteMicDuringSpeech = Boolean(msg.muteMicDuringSpeech);
+      offered = msg.stt === "scribe" ? "scribe" : "browser";
+      boot();
+    } else if (type === "stt") {
+      streaming?.handle(String(msg.kind), String(msg.text ?? ""));
+    } else if (type === "stt_unavailable") {
+      if (sttMode === "scribe") {
+        socket.send({ type: "mic", text: "Scribe unavailable: falling back to Chrome's recogniser" });
+        buildEar("browser");
+        startEar();
+      }
     } else if (type === "audio") {
       const data = msg.data as string;
       if (data) {
@@ -206,12 +246,26 @@ export function startVoice(hooks: VoiceHooks = {}): VoiceApp {
     hooks.onMode?.(mode, awake());
   }
 
-  setTimeout(() => {
+  function startEar() {
     voiceInput.start();
     if (mode === "off") voiceInput.pause();
     else if (current !== "speaking") transition("listening");
     hooks.onMode?.(mode, awake());
-  }, 1000);
+  }
+
+  // The ear starts once a second has passed AND the server has said which
+  // one it offers. A server too old to say gets Chrome's recogniser.
+  let offered: "scribe" | "browser" | null = null;
+  let settled = false;
+  let booted = false;
+  function boot() {
+    if (booted || !settled || !offered) return;
+    booted = true;
+    buildEar(offered);
+    startEar();
+  }
+  setTimeout(() => { settled = true; boot(); }, 1000);
+  setTimeout(() => { if (!offered) { offered = "browser"; boot(); } }, 4000);
 
   const ensureAudio = () => {
     const ctx = audioPlayer.getAnalyser().context as AudioContext;

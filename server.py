@@ -76,6 +76,7 @@ import session_steer
 import session_watch
 import specs
 import stream_parser
+import stt_stream
 import usage_scan
 import usage_store
 import web_auth
@@ -106,6 +107,12 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
 TTS_PROVIDER = "elevenlabs" if ELEVENLABS_API_KEY else "fish"
 TTS_API_KEY = ELEVENLABS_API_KEY or FISH_API_KEY
 TTS_VOICE_ID = ELEVENLABS_VOICE_ID if ELEVENLABS_API_KEY else FISH_VOICE_ID
+# The ear: ElevenLabs Scribe realtime when the key is there (stt_stream.py),
+# Chrome's own recogniser otherwise or when JARVIS_STT=browser.
+STT_PROVIDER = ("scribe" if ELEVENLABS_API_KEY and os.getenv("JARVIS_STT", "scribe") != "browser"
+                else "browser")
+# Handshakes that fail in a row before the page is told to fall back to Chrome.
+STT_FALLBACK_AFTER = 3
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -6768,9 +6775,13 @@ async def voice_handler(ws: WebSocket):
         {"type": "transcript", "text": "...", "isFinal": true}
         {"type": "interim", "text": "..."}          partial recognition, throttled
         {"type": "played", "utt": 3, "idx": 1}      one audio chunk finished playing
+        {"type": "audio_in", "data": "<base64 pcm>"}  16 kHz mono mic audio (stt "scribe")
+        {"type": "audio_end"}                        the page stopped hearing sound
 
     Server -> Client:
-        {"type": "config", "muteMicDuringSpeech": false}
+        {"type": "config", "muteMicDuringSpeech": false, "stt": "scribe"|"browser"}
+        {"type": "stt", "kind": "partial"|"final", "text": "..."}
+        {"type": "stt_unavailable"}                  Scribe is down: use Chrome's recogniser
         {"type": "audio", "utt": 3, "idx": 1, "data": "<base64 mp3>", "text": "..."}
         {"type": "stop"}                             halt playback, empty the queue
         {"type": "drop_queued"}                      keep the playing chunk, drop the rest
@@ -6781,12 +6792,14 @@ async def voice_handler(ws: WebSocket):
     """
     await ws.accept()
     queue = _add_voice_client(ws)
+    ear: Optional[stt_stream.ScribeStream] = None
     log.info("Voice WebSocket connected")
     try:
         # Through this client's own queue, not straight down the socket, so
         # the opening frames cannot be overtaken by a broadcast that lands
         # while they are in flight.
-        _enqueue(queue, {"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH})
+        _enqueue(queue, {"type": "config", "muteMicDuringSpeech": MUTE_MIC_DURING_SPEECH,
+                         "stt": STT_PROVIDER})
         _enqueue(queue, {"type": "status", "state": "idle"})
 
         global _last_greeting_time
@@ -6803,6 +6816,17 @@ async def voice_handler(ws: WebSocket):
             if speech is None:
                 continue
             kind = msg.get("type")
+            if kind == "audio_in":
+                data = msg.get("data")
+                if STT_PROVIDER == "scribe" and isinstance(data, str) and len(data) < 65536:
+                    if ear is None:
+                        ear = _make_ear(queue)
+                    await ear.feed(data)
+                continue
+            if kind == "audio_end":
+                if ear is not None:
+                    await ear.flush()
+                continue
             if kind == "mic":
                 # The browser's recogniser is the one part of the voice path
                 # whose failures were invisible from here: it can go deaf with
@@ -6878,6 +6902,25 @@ async def voice_handler(ws: WebSocket):
         log.error(f"WebSocket error: {e}", exc_info=True)
     finally:
         _drop_voice_client(ws)
+        if ear is not None:
+            await ear.close()
+
+
+def _make_ear(queue: asyncio.Queue) -> stt_stream.ScribeStream:
+    """One Scribe stream per page. Its text goes back to the page, which runs
+    it through the same wake-word gate as Chrome's transcripts did."""
+    ear: Optional[stt_stream.ScribeStream] = None
+
+    async def on_text(kind: str, text: str) -> None:
+        _enqueue(queue, {"type": "stt", "kind": kind, "text": text})
+
+    async def on_event(event: str) -> None:
+        log.info("mic: %s", event[:160])
+        if ear is not None and ear.failures >= STT_FALLBACK_AFTER:
+            _enqueue(queue, {"type": "stt_unavailable"})
+
+    ear = stt_stream.ScribeStream(ELEVENLABS_API_KEY, on_text, on_event)
+    return ear
 
 
 # ---------------------------------------------------------------------------
