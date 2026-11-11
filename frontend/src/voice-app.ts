@@ -176,7 +176,9 @@ export function startVoice(hooks: VoiceHooks = {}): VoiceApp {
     (level: number) => hooks.onLevel?.(level),
     (event: string) => {
       socket.send({ type: "mic", text: event });
-      if (event.startsWith("DEAF")) voiceInput.restart("deaf: audio in, no results");
+      // The streaming ear only sends sound above its own gate, so room noise
+      // that the raw monitor hears is not deafness: never restart it for that.
+      if (event.startsWith("DEAF") && sttMode !== "scribe") voiceInput.restart("deaf: audio in, no results");
     },
   );
 
