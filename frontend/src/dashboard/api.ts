@@ -207,6 +207,15 @@ export async function focusSession(sessionId: string): Promise<FocusOutcome> {
   return body.outcome;
 }
 
+/** End a conversation: SIGTERM to its `claude` processes. The transcript
+ * stays, so it shows up in the history and can be reopened. */
+export async function closeSession(sessionId: string): Promise<"closed" | "nothing" | "failed"> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/close`,
+    { method: "POST" });
+  if (!res.ok) return "failed";
+  return ((await res.json()) as { outcome: "closed" | "nothing" | "failed" }).outcome;
+}
+
 /** One line for the user, per outcome. */
 export const FOCUS_MESSAGES: Record<FocusOutcome, string> = {
   focused: "Fenêtre ouverte",

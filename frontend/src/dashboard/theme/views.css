@@ -680,6 +680,17 @@
   text-shadow: 0 0 10px rgba(77, 163, 255, .8); }
 .orbit-tag-state { margin-top: 3px; font-size: 8px; letter-spacing: .3em; color: var(--c); opacity: .85; }
 .orbit-tag.is-hover .orbit-tag-name { color: var(--c); }
+/* Close: always visible on cards, on hover on the ring's tags. */
+.orbit-close { position: absolute; top: 8px; right: 8px; z-index: 2; min-width: 20px; height: 20px; padding: 0 5px;
+  border: 1px solid rgba(169, 212, 255, .18); border-radius: 3px; background: rgba(6, 14, 30, .6);
+  color: rgba(169, 212, 255, .55); font: 400 13px/18px var(--font-ui); cursor: pointer; opacity: .55; transition: opacity .15s, color .15s, border-color .15s; }
+.orbit-card:hover .orbit-close, .orbit-close:focus-visible { opacity: 1; }
+.orbit-close:hover { color: #ff8da1; border-color: rgba(255, 77, 109, .6); }
+.orbit-close.is-armed { opacity: 1; color: #ff4d6d; border-color: #ff4d6d; font-size: 8.5px; letter-spacing: .2em; }
+.orbit-card .orbit-row { padding-right: 26px; }
+.orbit-tag { position: relative; }
+.orbit-tag .orbit-close { top: -24px; right: 50%; transform: translateX(50%); opacity: 0; pointer-events: none; }
+.orbit-tag.is-hover .orbit-close, .orbit-tag .orbit-close.is-armed { opacity: 1; pointer-events: auto; }
 
 .orbit-hint { position: absolute; left: 32px; bottom: 20px; font: 400 9px var(--font-mono); letter-spacing: .2em;
   color: rgba(169, 212, 255, .35); white-space: pre; }

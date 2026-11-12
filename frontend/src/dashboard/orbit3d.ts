@@ -14,7 +14,7 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import {
-  listSessions, focusSession, FOCUS_MESSAGES, type SessionRow,
+  listSessions, focusSession, closeSession, FOCUS_MESSAGES, type SessionRow,
   listClosedSessions, reopenSession, type ClosedSession,
 } from "./api";
 import { el } from "./ui";
@@ -361,9 +361,11 @@ function makeGlyph(s: SessionRow): Glyph {
   scene.add(link, pulses);
 
   const tagEl = el("div", "orbit-tag");
+  tagEl.dataset.id = s.session_id;
   const tagName = el("div", "orbit-tag-name");
   const tagState = el("div", "orbit-tag-state");
-  tagEl.append(tagName, tagState);
+  const tagClose = closeButton(s.session_id);
+  tagEl.append(tagClose, tagName, tagState);
   tagEl.addEventListener("click", () => void focus(s.session_id));
   tagEl.addEventListener("mouseenter", () => setHover(s.session_id));
   tagEl.addEventListener("mouseleave", () => setHover(null));
@@ -386,6 +388,7 @@ function paintGlyph(g: Glyph, s: SessionRow): void {
   g.tag.element.className = `orbit-tag is-${kind}${hovered === s.session_id ? " is-hover" : ""}`;
   g.tagName.textContent = s.number ? `${s.number} · ${nameOf(s)}` : nameOf(s);
   g.tagState.textContent = LABEL[kind];
+  paintClose(g.tag.element.querySelector(".orbit-close") as HTMLElement, s.session_id);
   g.row = s;
 }
 
@@ -402,7 +405,9 @@ function dropGlyph(id: string): void {
 async function refresh(): Promise<void> {
   try {
     const snap = await listSessions();
-    apply(snap.sessions.filter((s) => s.state !== "gone"));
+    const now = Date.now();
+    for (const [id, until] of closing) if (until < now) closing.delete(id);
+    apply(snap.sessions.filter((s) => s.state !== "gone" && !closing.has(s.session_id)));
   } catch {
     /* the Sessions tab already shows the link banner; keep the last frame */
   }
@@ -451,7 +456,7 @@ function paintList(): void {
     const msg = el("div", "orbit-msg", text);
     const tool = kind === "working" && s.recent_tools.length ? ` · ${s.recent_tools[s.recent_tools.length - 1]}` : "";
     const meta = el("div", "orbit-meta", `${s.project} · ${ago(s.since)}${tool}`);
-    li.append(head, topic, msg, meta);
+    li.append(closeButton(s.session_id), head, topic, msg, meta);
     li.addEventListener("click", () => void focus(s.session_id));
     li.addEventListener("mouseenter", () => setHover(s.session_id));
     li.addEventListener("mouseleave", () => setHover(null));
@@ -531,6 +536,64 @@ async function reopen(c: ClosedSession, li: HTMLElement): Promise<void> {
   toast(ok ? `${c.name || c.title || c.project} · rouverte` : "Impossible de rouvrir cette session", !ok);
   // It is live again now: the next poll moves it back to the queue.
   window.setTimeout(() => { if (showingHistory) void paintHistory(); }, 4000);
+}
+
+// ── close: the × on every card and tag ────────────────────────────────────
+//
+// Two clicks, so a stray one never ends a conversation: the first arms the
+// button ("FERMER ?") for a few seconds, the second sends SIGTERM. The list is
+// rebuilt on every poll, so the armed state lives here, not in the DOM.
+
+const ARM_MS = 3500;
+let armed: { id: string; until: number } | null = null;
+// Closed conversations stay hidden while their process exits, so they do not
+// flash back on the next poll.
+const closing = new Map<string, number>();
+
+function closeButton(id: string): HTMLButtonElement {
+  const b = el("button", "orbit-close");
+  b.type = "button";
+  b.title = "Fermer cette session (rouvrable depuis l'historique)";
+  b.addEventListener("click", (e) => { e.stopPropagation(); void onClose(id); });
+  paintClose(b, id);
+  return b;
+}
+
+function paintClose(b: HTMLElement | null, id: string): void {
+  if (!b) return;
+  const on = armed !== null && armed.id === id && armed.until > Date.now();
+  b.classList.toggle("is-armed", on);
+  b.textContent = on ? "FERMER ?" : "×";
+}
+
+function repaintCloses(): void {
+  for (const b of Array.from(document.querySelectorAll<HTMLElement>(".orbit-close"))) {
+    const host = b.closest<HTMLElement>("[data-id]");
+    if (host?.dataset.id) paintClose(b, host.dataset.id);
+  }
+}
+
+async function onClose(id: string): Promise<void> {
+  const s = rows.find((r) => r.session_id === id);
+  if (!s) return;
+  if (!armed || armed.id !== id || armed.until < Date.now()) {
+    armed = { id, until: Date.now() + ARM_MS };
+    blip(880, 0.05);
+    repaintCloses();
+    window.setTimeout(repaintCloses, ARM_MS + 50);
+    return;
+  }
+  armed = null;
+  blip(520, 0.08);
+  const outcome = await closeSession(id);
+  if (outcome === "failed") {
+    toast("Impossible de fermer cette session", true);
+    repaintCloses();
+    return;
+  }
+  closing.set(id, Date.now() + 15000);
+  apply(rows.filter((r) => r.session_id !== id));
+  toast(`${nameOf(s)} · fermée, rouvrable dans l'historique`, false);
 }
 
 let toastTimer = 0;

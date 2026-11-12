@@ -77,6 +77,7 @@ import session_watch
 import specs
 import stream_parser
 import stt_stream
+import session_close
 import usage_scan
 import usage_store
 import web_auth
@@ -2329,6 +2330,19 @@ async def api_focus_session(session_id: str):
     if pid is None:
         return {"outcome": window_focus.NO_TTY}
     outcome = await window_focus.focus(pid, session.roster_name)
+    return {"outcome": outcome}
+
+
+@app.post("/api/sessions/{session_id}/close")
+async def api_close_session(session_id: str):
+    """The Orbit's close button: SIGTERM to this conversation's `claude`
+    processes. The transcript stays, so it lands in the history list and can
+    be reopened. Pids come from the snapshot, never from the request."""
+    session = _snapshot_or_empty().by_id(session_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": "Unknown session"})
+    outcome = await asyncio.to_thread(session_close.close, list(session.pids))
+    log.info(f"close {session.roster_name or session.project} ({session_id[:8]}): {outcome}")
     return {"outcome": outcome}
 
 
